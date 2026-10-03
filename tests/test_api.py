@@ -337,6 +337,28 @@ cookie = member_cookie
 call("get_config", expect=401)
 cookie = admin_cookie
 
+# --- invite links can be shown again and renewed; already-connected inboxes are reported
+inv = call("create_invite", name="Robin")
+rid = [i for i in call("get_config")["invites"] if i["name"] == "Robin"][0]
+check(rid["has_link"] and call("invite_link", id=rid["id"])["url"] == inv["url"], "pending invite link can be shown again")
+new = call("renew_invite", id=rid["id"])
+check(new["url"] != inv["url"] and call("invite_link", id=new["id"])["url"] == new["url"], "renewing gives a new link")
+cookie = ""
+call("invite_info", expect=404, token=inv["url"].split("#/join/")[1])
+check(call("invite_info", token=new["url"].split("#/join/")[1])["name"] == "Robin", "old link stops working, new one works")
+cookie = admin_cookie
+with psycopg.connect(os.environ.get("DATABASE_URL", "postgresql://postgres:dev@localhost:55432/postgres")) as db:
+    db.execute("INSERT INTO invites(token_hash,created_by,name,expires_at) VALUES('legacyhash',%s,'Old',NOW() + INTERVAL '1 day')", (call("get_config")["user"]["id"],))
+old = [i for i in call("get_config")["invites"] if i["id"] == "legacyhash"][0]
+check(old["has_link"] is False and call("invite_link", id="legacyhash")["url"] == "", "invites from before have no stored link")
+check(call("renew_invite", id="legacyhash")["url"].startswith(BASE + "/#/join/"), "old invite can get a new link")
+url = call("google_oauth_start", purpose="connect")["url"]
+check(urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["prompt"] == ["consent select_account"], "google always shows the account picker")
+hook("profile", email="jane@gmail.com", scope="openid email https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send")
+status, loc = oauth("connect", name="")
+check(loc == "/?google=already_connected&reason=jane%40gmail.com", "reconnecting the same Gmail is reported")
+check(ms_oauth("connect") == "/?google=already_connected&reason=sam%40outlook.com", "reconnecting the same Outlook inbox is reported")
+
 # --- removed actions are gone
 call("run_check", expect=400)
 call("rotate_cron", expect=400)

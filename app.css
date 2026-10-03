@@ -559,3 +559,10 @@ button.nav-item { width: 100%; background: transparent; text-align: left; }
 .logo, .ws-logo { background: #0b0b0d; }
 .logo svg { width: 78%; height: 78%; }
 .ws-logo svg { width: 28px; height: 28px; }
+
+/* Sign-in tile: green with a white mantis in light mode; dark mode keeps the dark tile. */
+:root:not([data-theme="dark"]) .auth-card .logo { background: #3f8f2c; --mantis: #fff; --mantis-eye: #3f8f2c; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .auth-card .logo { background: #0b0b0d; --mantis: #8cc461; --mantis-eye: #0b0b0d; } }
+.auth-card #auth-form .btn + .btn { margin-top: 8px; }
+.dlg-body .copy code { white-space: normal; overflow-wrap: anywhere; }
+.dlg-body .copy { height: auto; padding: 8px 10px; }

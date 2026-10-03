@@ -50,6 +50,7 @@ const ICONS = {
   key: '<circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/>',
   pause: '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
   play: '<path d="M6 3l14 9-14 9V3z"/>',
+  link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
   bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
   updown: '<path d="m7 15 5 5 5-5M7 9l5-5 5 5"/>',
   chart: '<path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/>',
@@ -57,7 +58,7 @@ const ICONS = {
 };
 const icon = (name, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ''}</svg>`;
 // Praying mantis in profile: upright thorax, folded raptorial forelegs, leaf-shaped abdomen.
-const LOGO = '<svg viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="#8cc461" stroke-linecap="round" stroke-linejoin="round"><path d="M44.5 10.5 Q49 5.5 54.5 4.5" stroke-width="1.3"/><path d="M42.5 11 Q44.5 5 48.5 2.5" stroke-width="1.3"/><path d="M30.5 38 L39.5 16.5" stroke-width="4.2"/><path d="M36.5 23.5 L47.5 29.5 L45.5 20.5 L47.5 19" stroke-width="3.2"/><path d="M31 39.5 L36 47.5 L40 57" stroke-width="2.1"/><path d="M28.5 40.5 L24.5 49 L27.5 57.5" stroke-width="2.1"/><path d="M26 41 L18 49.5 L13.5 57.5" stroke-width="2.1"/></g><g fill="#8cc461"><path d="M33 36.5 C26.5 34.5 13 38.5 4.5 49.5 C16 50 28 45 33.5 40 Z"/><path d="M35.5 13.5 L47 9.5 L44.5 19.5 Z"/></g><circle cx="44.2" cy="12.3" r="1.7" fill="#0b0b0d"/></svg>';
+const LOGO = '<svg viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="var(--mantis, #8cc461)" stroke-linecap="round" stroke-linejoin="round"><path d="M44.5 10.5 Q49 5.5 54.5 4.5" stroke-width="1.3"/><path d="M42.5 11 Q44.5 5 48.5 2.5" stroke-width="1.3"/><path d="M30.5 38 L39.5 16.5" stroke-width="4.2"/><path d="M36.5 23.5 L47.5 29.5 L45.5 20.5 L47.5 19" stroke-width="3.2"/><path d="M31 39.5 L36 47.5 L40 57" stroke-width="2.1"/><path d="M28.5 40.5 L24.5 49 L27.5 57.5" stroke-width="2.1"/><path d="M26 41 L18 49.5 L13.5 57.5" stroke-width="2.1"/></g><g fill="var(--mantis, #8cc461)"><path d="M33 36.5 C26.5 34.5 13 38.5 4.5 49.5 C16 50 28 45 33.5 40 Z"/><path d="M35.5 13.5 L47 9.5 L44.5 19.5 Z"/></g><circle cx="44.2" cy="12.3" r="1.7" fill="var(--mantis-eye, #0b0b0d)"/></svg>';
 
 // ------------------------------------------------------------------ helpers
 
@@ -692,7 +693,7 @@ function people() {
         <div class="field"><label class="label" for="inv-email">Email <span class="faint">(optional, locks the invite to it)</span></label><input class="input" id="inv-email" type="email" data-form="invite" name="email" value="${esc(formVal('invite', 'email'))}" placeholder="alex@gmail.com"></div></div>
         ${ui.inviteUrl ? `<div class="field" style="margin-top:14px"><span class="label">Invite link</span><div class="copy"><code>${esc(ui.inviteUrl)}</code>${btn('copy', '', {ico: 'copy', cls: 'sm icon ghost', attrs: `data-v="${esc(ui.inviteUrl)}"`, title: 'Copy'})}</div><span class="hint">Send this link to them yourself. Anyone with it can create a member account until it’s used.</span></div>` : ''}</div>
       <div class="card-foot"><div class="right">${btn('create-invite', 'Create invite link', {cls: 'primary', ico: 'plus'})}</div></div></div>
-    ${S.invites.length ? `<div class="card"><div class="card-head"><h2>Waiting to join</h2></div><table class="table"><tbody>${S.invites.map(i => `<tr><td><b>${esc(i.name || 'Unnamed')}</b><div class="faint small">${esc(i.email || 'Any email')}</div></td><td class="small muted">Expires ${esc(date(i.expires_at))}</td><td style="text-align:right">${btn('revoke-invite', 'Revoke', {cls: 'sm ghost danger', id: i.id})}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    ${S.invites.length ? `<div class="card"><div class="card-head"><h2>Waiting to join</h2></div><table class="table"><tbody>${S.invites.map(i => `<tr><td><b>${esc(i.name || 'Unnamed')}</b><div class="faint small">${esc(i.email || 'Any email')}</div></td><td class="small muted">Expires ${esc(date(i.expires_at))}</td><td style="text-align:right">${btn('show-invite', '', {ico: 'link', cls: 'sm icon ghost', id: i.id, title: 'Show invite link'})}${btn('revoke-invite', 'Revoke', {cls: 'sm ghost danger', id: i.id})}</td></tr>`).join('')}</tbody></table></div>` : ''}
     <div class="card"><div class="card-head"><h2>Accounts</h2><span class="sub">${plural(members.length, 'member')}</span></div>
       <table class="table"><thead><tr><th>Person</th><th>Role</th><th>Inboxes</th><th class="hide-xs">Joined</th><th></th></tr></thead><tbody>${S.people.map(x => `<tr>
         <td><b>${esc(x.name || x.email.split('@')[0])}</b><div class="faint small">${esc(x.email)}</div></td>
@@ -700,6 +701,38 @@ function people() {
         <td class="mono">${x.inboxes}</td><td class="small muted hide-xs">${esc(date(x.created_at))}</td>
         <td style="text-align:right">${x.role === 'member' ? btn('remove-person', 'Remove', {cls: 'sm ghost danger', id: String(x.id)}) : ''}</td></tr>`).join('')}</tbody></table></div>
   </div></div>`;
+}
+
+function inviteDialog(invite, url) {
+  const who = invite.name || invite.email || 'this person';
+  const expires = new Date(invite.expires_at).toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
+  openDialog(`<form method="dialog">
+    <div class="dlg-head"><h2>Invite link for ${esc(who)}</h2><p>${url ? `Works once, until ${esc(expires)}.` : 'This invite was created before links were saved, so its link can’t be shown again. Create a new link to share instead.'}</p></div>
+    ${url ? `<div class="dlg-body"><div class="copy"><code id="inv-link">${esc(url)}</code></div></div>` : ''}
+    <div class="dlg-foot"><button type="button" class="btn ghost" id="inv-renew" style="margin-right:auto">Create a new link</button>
+      <button type="button" class="btn" data-close>Close</button>${url ? '<button type="button" class="btn primary" id="inv-copy">Copy link</button>' : ''}</div></form>`, d => {
+    const copy = async link => { try { await navigator.clipboard.writeText(link); toast('Invite link copied'); } catch (e) { toast('Copy failed. Select the link instead', 'err'); } };
+    if (url) $('#inv-copy', d).onclick = () => copy(url);
+    $('#inv-renew', d).onclick = async () => {
+      if (url && !confirm('Create a new link? The current link for ' + who + ' will stop working.')) return;
+      try {
+        const r = await api('renew_invite', {id: invite.id});
+        closeDialog('ok');
+        await load();
+        inviteDialog({...invite, id: r.id, expires_at: new Date(Date.now() + r.days * 86400000).toISOString()}, r.url);
+      } catch (err) { toast(err.message, 'err'); }
+    };
+  });
+}
+
+// Someone who's already signed in opened an invite link: let them choose instead of silently ignoring it.
+function renderJoinSignedIn(user, token) {
+  root.innerHTML = `<div class="auth"><div class="auth-card"><div class="logo">${LOGO}</div>
+    <h1>You’re already signed in</h1><p>You’re signed in as <b>${esc(user.email)}</b>. This invite link creates a separate account. To add more inboxes, keep using your current account.</p>
+    <form id="auth-form"><button type="button" class="btn primary" id="j-stay">Continue as ${esc(user.email)}</button>
+      <button type="button" class="btn" id="j-switch">Sign out and use this invite</button></form></div></div>`;
+  $('#j-stay').onclick = () => { history.replaceState(null, '', location.pathname); start(user); };
+  $('#j-switch').onclick = async () => { try { await api('logout'); } finally { S = null; renderJoin(token); } };
 }
 
 // ------------------------------------------------------------------ member view
@@ -941,6 +974,11 @@ const ACTIONS = {
       await load();
       try { await navigator.clipboard.writeText(r.url); toast('Invite link created and copied'); } catch (e) { toast('Invite link created'); }
     });
+  },
+  async 'show-invite'(el) {
+    const invite = S.invites.find(x => x.id === el.dataset.id);
+    const r = await api('invite_link', {id: invite.id});
+    inviteDialog(invite, r.url);
   },
   async 'revoke-invite'(el) {
     if (!await confirmBox({title: 'Revoke this invite?', text: 'The link stops working straight away.', ok: 'Revoke', danger: true})) return;
@@ -1254,7 +1292,7 @@ async function switchDialog() {
 
 // ------------------------------------------------------------------ start
 
-const GOOGLE_RESULT = {connected: 'Inbox connected', send_enabled: 'Sending replies is now allowed', filter_added: 'Filter saved in the inbox', filter_exists: 'That filter was already in place'};
+const GOOGLE_RESULT = {connected: 'Inbox connected', already_connected: 'already', send_enabled: 'Sending replies is now allowed', filter_added: 'Filter saved in the inbox', filter_exists: 'That filter was already in place'};
 
 async function start(user) {
   const ok = await load();
@@ -1264,7 +1302,8 @@ async function start(user) {
   const result = params.get('google');
   if (result) {
     history.replaceState(null, '', location.pathname + (S.role === 'member' ? '' : '#/seeds'));
-    toast(GOOGLE_RESULT[result] || ('Connection failed' + (params.get('reason') ? ': ' + params.get('reason') : '')), GOOGLE_RESULT[result] ? 'ok' : 'err');
+    if (result === 'already_connected') toast((params.get('reason') || 'That inbox') + ' was already connected. To add another inbox, pick a different account on the sign-in screen.', 'err');
+    else toast(GOOGLE_RESULT[result] || ('Connection failed' + (params.get('reason') ? ': ' + params.get('reason') : '')), GOOGLE_RESULT[result] ? 'ok' : 'err');
   }
   route();
   refreshPlacements(true);
@@ -1274,7 +1313,7 @@ async function start(user) {
   const join = (location.hash.match(/^#\/join\/([\w-]+)/) || [])[1];
   try {
     const status = await api('status');
-    if (status.user) { if (join) history.replaceState(null, '', location.pathname); await start(status.user); return; }
+    if (status.user) { if (join) { renderJoinSignedIn(status.user, join); return; } await start(status.user); return; }
     if (join) { await renderJoin(join); return; }
     ui.authMode = status.setup_required ? 'setup' : 'login';
   } catch (e) {

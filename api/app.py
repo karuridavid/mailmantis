@@ -87,6 +87,7 @@ def schema(conn) -> None:
         "ALTER TABLE seed_accounts ADD COLUMN IF NOT EXISTS login TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE seed_accounts ADD COLUMN IF NOT EXISTS owner_id BIGINT REFERENCES admins(id) ON DELETE SET NULL",
         "CREATE TABLE IF NOT EXISTS invites (token_hash TEXT PRIMARY KEY, created_by BIGINT NOT NULL REFERENCES admins(id) ON DELETE CASCADE, email TEXT NOT NULL DEFAULT '', name TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), expires_at TIMESTAMPTZ NOT NULL, used_by BIGINT REFERENCES admins(id) ON DELETE SET NULL, used_at TIMESTAMPTZ)",
+        "ALTER TABLE invites ADD COLUMN IF NOT EXISTS token_enc TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE seed_accounts ADD COLUMN IF NOT EXISTS imap_host TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE seed_accounts ADD COLUMN IF NOT EXISTS imap_port INTEGER NOT NULL DEFAULT 993",
         "ALTER TABLE seed_accounts ADD COLUMN IF NOT EXISTS smtp_host TEXT NOT NULL DEFAULT ''",
@@ -618,8 +619,9 @@ def read_config(conn, user: dict, handler=None) -> dict:
         cur.execute("SELECT a.id,a.email,a.name,a.role,a.created_at,(SELECT COUNT(*) FROM seed_accounts s WHERE s.owner_id=a.id) "
                     "FROM admins a ORDER BY a.role, a.created_at")
         people = [{"id": r[0], "email": r[1], "name": r[2], "role": r[3], "created_at": r[4].isoformat(), "inboxes": r[5]} for r in cur.fetchall()]
-        cur.execute("SELECT token_hash,email,name,created_at,expires_at FROM invites WHERE used_at IS NULL AND expires_at > NOW() ORDER BY created_at DESC")
-        invites = [{"id": r[0], "email": r[1], "name": r[2], "created_at": r[3].isoformat(), "expires_at": r[4].isoformat()} for r in cur.fetchall()]
+        cur.execute("SELECT token_hash,email,name,created_at,expires_at,token_enc<>'' FROM invites WHERE used_at IS NULL AND expires_at > NOW() ORDER BY created_at DESC")
+        invites = [{"id": r[0], "email": r[1], "name": r[2], "created_at": r[3].isoformat(), "expires_at": r[4].isoformat(),
+                    "has_link": r[5]} for r in cur.fetchall()]
         cur.execute("SELECT id,seed_email,result,tab,duration_ms,message_id,draft_id,created_at FROM activity ORDER BY created_at DESC LIMIT 100")
         activity = [{"id": r[0], "seed_email": r[1], "result": r[2], "tab": r[3], "duration_ms": r[4], "message_id": r[5],
                      "draft_id": r[6], "created_at": r[7].isoformat()} for r in cur.fetchall()]
@@ -724,10 +726,31 @@ def act_create_invite(conn, body, user, req=None):
     token = secrets.token_urlsafe(24)
     with conn.cursor() as cur:
         cur.execute("DELETE FROM invites WHERE expires_at < NOW() - INTERVAL '30 days'")
-        cur.execute("INSERT INTO invites(token_hash,created_by,email,name,expires_at) VALUES(%s,%s,%s,%s,NOW() + %s * INTERVAL '1 day')",
-                    (hashlib.sha256(token.encode()).hexdigest(), user["id"], email, " ".join(text(body, "name", 100).split()), INVITE_DAYS))
+        cur.execute("INSERT INTO invites(token_hash,created_by,email,name,expires_at,token_enc) VALUES(%s,%s,%s,%s,NOW() + %s * INTERVAL '1 day',%s)",
+                    (hashlib.sha256(token.encode()).hexdigest(), user["id"], email, " ".join(text(body, "name", 100).split()), INVITE_DAYS, seal(token)))
     conn.commit()
     return {"ok": True, "url": public_url(req) + "/#/join/" + token, "days": INVITE_DAYS}
+
+
+def act_invite_link(conn, body, user, req=None):
+    """The link for a pending invite. Invites made before links were stored have none; renew those."""
+    row = one(conn, "SELECT token_enc FROM invites WHERE token_hash=%s AND used_at IS NULL AND expires_at > NOW()", (text(body, "id", 64),))
+    if not row:
+        raise ValueError("That invite was used, revoked or has expired")
+    return {"ok": True, "url": public_url(req) + "/#/join/" + unseal(row[0]) if row[0] else ""}
+
+
+def act_renew_invite(conn, body, user, req=None):
+    """Replace an invite's link (the old one stops working) and give it another 7 days."""
+    token = secrets.token_urlsafe(24)
+    new_id = hashlib.sha256(token.encode()).hexdigest()
+    with conn.cursor() as cur:
+        cur.execute("UPDATE invites SET token_hash=%s,token_enc=%s,expires_at=NOW() + %s * INTERVAL '1 day' WHERE token_hash=%s AND used_at IS NULL",
+                    (new_id, seal(token), INVITE_DAYS, text(body, "id", 64)))
+        if cur.rowcount != 1:
+            raise ValueError("That invite was already used or revoked")
+    conn.commit()
+    return {"ok": True, "id": new_id, "url": public_url(req) + "/#/join/" + token, "days": INVITE_DAYS}
 
 
 def act_revoke_invite(conn, body, user, req=None):
@@ -1295,7 +1318,7 @@ def act_google_oauth_start(conn, body, user, req=None):
     if purpose.startswith("filter"):
         scopes += " https://www.googleapis.com/auth/gmail.settings.basic"
     params = {"client_id": client["id"], "redirect_uri": client["redirect_uri"], "response_type": "code", "scope": scopes,
-              "access_type": "offline", "prompt": "consent", "include_granted_scopes": "true", "state": state}
+              "access_type": "offline", "prompt": "consent select_account", "include_granted_scopes": "true", "state": state}
     if account_hint:
         params["login_hint"] = account_hint
     return {"url": "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params)}
@@ -1329,7 +1352,7 @@ ACTIONS = {
     "microsoft_oauth_start": act_microsoft_oauth_start, "save_microsoft": act_save_microsoft,
     "connect_imap": act_connect_imap, "message_action": act_message_action,
     "check_oauth": act_check_oauth, "create_invite": act_create_invite, "revoke_invite": act_revoke_invite,
-    "remove_person": act_remove_person,
+    "remove_person": act_remove_person, "invite_link": act_invite_link, "renew_invite": act_renew_invite,
     "change_password": act_change_password,
 }
 
@@ -1375,6 +1398,7 @@ def google_callback(query: dict, handler) -> str:
         if not refresh:
             raise ValueError("Google did not return an offline connection. Remove this app in Google Account permissions and reconnect")
         can_send = "https://www.googleapis.com/auth/gmail.send" in granted
+        existed = bool(one(conn, "SELECT 1 FROM seed_accounts WHERE email=%s", (account_email,))) if purpose == "connect" else False
         with conn.cursor() as cur:
             if previous:
                 cur.execute("UPDATE seed_accounts SET oauth_refresh_enc=%s,gmail_send_enabled=gmail_send_enabled OR %s,auth_type='google_oauth' WHERE id=%s",
@@ -1394,6 +1418,8 @@ def google_callback(query: dict, handler) -> str:
             set_seed_filter_status(conn, previous["id"], gmail_api.filter_status(access, sender["email"]))
             conn.commit()
             return "/?google=" + ("filter_added" if created else "filter_exists")
+        if existed:
+            return "/?google=already_connected&reason=" + urllib.parse.quote(account_email)
         return "/?google=" + ("send_enabled" if purpose == "send" else "connected")
     except Exception as exc:
         if conn:
@@ -1434,6 +1460,7 @@ def microsoft_callback(query: dict, handler) -> str:
         if not access or not refresh:
             raise ValueError("Microsoft did not return an offline connection. Please try again")
         account_email = microsoft_api.profile_email(access)
+        existed = bool(one(conn, "SELECT 1 FROM seed_accounts WHERE email=%s", (account_email,))) if purpose == "connect" else False
         with conn.cursor() as cur:
             if purpose == "connect":
                 cur.execute("INSERT INTO seed_accounts(id,name,email,provider,password_enc,auth_type,oauth_refresh_enc,gmail_send_enabled,owner_id) "
@@ -1456,6 +1483,8 @@ def microsoft_callback(query: dict, handler) -> str:
             set_seed_filter_status(conn, seed_id, microsoft_api.filter_status(access, sender["email"]))
             conn.commit()
             return "/?google=" + ("filter_added" if created else "filter_exists")
+        if existed:
+            return "/?google=already_connected&reason=" + urllib.parse.quote(account_email)
         return "/?google=connected"
     except Exception as exc:
         if conn:
