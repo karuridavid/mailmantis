@@ -35,8 +35,12 @@ PROFILE = {"email": "jane@gmail.com",
 NOT_FOUND = {"placement": "Not found", "tab": "", "labels": "", "gmail_id": "", "thread_id": ""}
 
 
-def fake_gemini(api_key, model, prompt, *, schema_def=None, research=False):
-    CALLS.append(["gemini", model, research, "<page_text>" in prompt])
+def fake_gemini(api_key, model, prompt, *, schema_def=None, research=False, search=True):
+    CALLS.append(["gemini", model, research, "<page_text>" in prompt, search])
+    if model == "gemini-zero":
+        raise app.GeminiError("Your Gemini key has no quota for gemini-zero", "zero_quota")
+    if model == "gemini-nosearch" and research and search:
+        raise app.GeminiError("Gemini's Google Search quota is used up for now", "search")
     if research:
         return {"summary": "Fernhill Pottery makes small-batch stoneware in Bristol and runs weekend wheel-throwing classes."}, ["https://example.com"]
     if '"emails"' in prompt:
@@ -75,6 +79,7 @@ gmail_api.send = fake_gmail_send
 gmail_api.filter_status = lambda token, sender: {"never_spam": True, "important": False}
 gmail_api.create_never_spam_filter = fake_create_filter
 app.gemini_request = fake_gemini
+app.gemini_models = lambda key: ["gemini-zero", "gemini-3.8-flash", "gemini-3.8-pro"]
 site_reader.read_site = lambda urls, **kw: ("[https://example.com] Title: Fernhill Pottery", ["https://example.com"])
 
 # Microsoft Graph fakes: one Outlook inbox whose messages live in MS_PLACEMENTS.

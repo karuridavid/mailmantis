@@ -249,6 +249,7 @@ function shell() {
       ${navItem('people', 'users', 'People', S.invites.length || '')}
       ${navItem('log', 'activity', 'Placement log')}
       <div class="sidebar-spacer"></div>
+      ${ui.installPrompt ? `<button class="nav-item" data-act="install">${icon('plus')}Install app</button>` : ''}
       ${navItem('settings', 'settings', 'Settings')}
       <button class="nav-item" data-act="theme" title="Theme: ${theme}">${icon(theme === 'dark' ? 'moon' : theme === 'light' ? 'sun' : 'monitor')}Theme<span class="badge plain">${theme}</span></button>
       <div class="account"><span class="avatar sm" style="--h:${hue(S.user.email)}">${esc(S.user.email.charAt(0).toUpperCase())}</span>
@@ -646,7 +647,7 @@ function settings() {
       <div><div class="field-row"><div class="field"><label class="label" for="s-ai">AI service</label><select class="input" id="s-ai" data-form="ai" name="provider">${[['none', 'Off'], ['gemini', 'Google Gemini']].map(([k, l]) => `<option value="${k}" ${formVal('ai', 'provider', S.ai_provider === 'gemini' ? 'gemini' : 'none') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
         <div class="field"><label class="label" for="s-model">Model</label><input class="input mono" id="s-model" data-form="ai" name="model" value="${esc(formVal('ai', 'model', S.ai_model || ''))}" placeholder="${esc(S.default_model)}"></div></div>
         <div class="field" style="margin-top:14px"><label class="label" for="s-key">API key</label><input class="input" id="s-key" type="password" autocomplete="new-password" data-form="ai" name="key" value="${esc(formVal('ai', 'key'))}" placeholder="${S.has_ai_key ? 'Saved. Leave blank to keep it' : 'From aistudio.google.com'}"><span class="hint">Encrypted in the database and only sent from the server to Google.</span></div>
-        <div style="margin-top:14px">${btn('save-ai', 'Save', {cls: 'primary'})}</div></div></section>
+        <div style="margin-top:14px">${btn('save-ai', 'Save', {cls: 'primary'})}</div>${geminiTestBlock()}</div></section>
 
     <section class="settings-section"><div><h3>Google sign-in</h3><p>OAuth client used to connect seed inboxes. ${g.ready ? '<span class="pill s-inbox" style="margin-top:8px">Ready</span>' : '<span class="pill s-tab" style="margin-top:8px">Not set</span>'}</p></div>
       <div><div class="field"><span class="label">Authorized redirect URI</span><div class="copy"><code>${esc(g.redirect_uri)}</code>${btn('copy', '', {ico: 'copy', cls: 'sm icon ghost', attrs: `data-v="${esc(g.redirect_uri)}"`, title: 'Copy'})}</div>
@@ -671,6 +672,14 @@ function settings() {
         <div class="field"><label class="label" for="s-new">New password</label><input class="input" id="s-new" type="password" autocomplete="new-password" data-form="pw" name="next" placeholder="12+ characters"></div></div>
         <div style="margin-top:14px">${btn('change-password', 'Update password')}</div></div></section>
   </div></div></div>`;
+}
+
+function geminiTestBlock() {
+  const r = ui.checks.gemini;
+  const ready = S.ai_provider === 'gemini' && S.has_ai_key;
+  return `<div class="check-block">${btn('test-gemini', 'Test key', {ico: 'refresh', cls: 'sm', disabled: !ready, title: ready ? '' : 'Save a Gemini key first'})}
+    ${r ? `<div class="check-list"><div class="check-row">${r.works ? '<span class="check-mark ok">✓</span>' : '<span class="check-mark bad">✕</span>'}<div><b>${r.works ? 'Gemini works' : 'Gemini problem'}</b><span>${esc(r.message)}</span></div></div>
+      ${r.suggest ? `<div class="check-row"><span class="check-mark ok">✓</span><div><b>${esc(r.suggest)} works with this key</b><span>Switch to it to keep using Gemini without changing the key.</span><div style="margin-top:8px">${btn('use-model', 'Use ' + esc(r.suggest), {cls: 'sm primary', attrs: `data-v="${esc(r.suggest)}"`})}</div></div></div>` : ''}</div>` : ''}</div>`;
 }
 
 function checkBlock(provider, ready) {
@@ -727,7 +736,7 @@ function inviteDialog(invite, url) {
 
 // Someone who's already signed in opened an invite link: let them choose instead of silently ignoring it.
 function renderJoinSignedIn(user, token) {
-  root.innerHTML = `<div class="auth"><div class="auth-card"><div class="logo">${LOGO}</div>
+  root.innerHTML = `<div class="auth">${themeButton()}<div class="auth-card"><div class="logo">${LOGO}</div>
     <h1>You’re already signed in</h1><p>You’re signed in as <b>${esc(user.email)}</b>. This invite link creates a separate account. To add more inboxes, keep using your current account.</p>
     <form id="auth-form"><button type="button" class="btn primary" id="j-stay">Continue as ${esc(user.email)}</button>
       <button type="button" class="btn" id="j-switch">Sign out and use this invite</button></form></div></div>`;
@@ -751,7 +760,7 @@ function memberView() {
       <div class="row-actions">${actions.join('')}</div></div>`;
   };
   return `<div class="member-page">
-    <header class="member-top"><span class="ws-logo">${LOGO}</span><b>Mail Mantis</b><span class="grow"></span><span class="muted small hide-sm">${esc(S.user.email)}</span>${btn('logout', 'Sign out', {cls: 'sm ghost', ico: 'logout'})}</header>
+    <header class="member-top"><span class="ws-logo">${LOGO}</span><b>Mail Mantis</b><span class="grow"></span><span class="muted small hide-sm">${esc(S.user.email)}</span>${themeButton('')}${btn('logout', 'Sign out', {cls: 'sm ghost', ico: 'logout'})}</header>
     <main class="member-main"><h1>Hi ${esc(name)}</h1><p class="lead">Connect the inboxes you’re happy to lend for email tests from <b>${esc(S.sender ? S.sender.domain : 'our domain')}</b>. Thank you!</p>
       <div class="member-connect">${btn('member-connect', 'Connect Gmail', {cls: 'primary', attrs: 'data-v="google"', disabled: !S.google.ready, title: S.google.ready ? '' : 'Not set up yet'})}${btn('member-connect', 'Connect Outlook', {cls: 'primary', attrs: 'data-v="microsoft"', disabled: !S.microsoft.ready, title: S.microsoft.ready ? '' : 'Not set up yet'})}</div>
       <div class="card"><div class="card-head"><h2>Your inboxes</h2><span class="sub">${plural(S.seeds.length, 'inbox', 'inboxes')}</span></div>${S.seeds.length ? S.seeds.map(row).join('') : empty('mail', 'No inboxes connected yet', 'Use the buttons above. You’ll choose the account on Google’s or Microsoft’s own sign-in page.')}</div>
@@ -771,7 +780,7 @@ async function renderJoin(token) {
   let invite;
   try { invite = await api('invite_info', {token}); }
   catch (e) { ui.authMode = 'login'; renderAuth(e.message); history.replaceState(null, '', location.pathname); return; }
-  root.innerHTML = `<div class="auth"><div class="auth-card"><div class="logo">${LOGO}</div>
+  root.innerHTML = `<div class="auth">${themeButton()}<div class="auth-card"><div class="logo">${LOGO}</div>
     <h1>Join Mail Mantis</h1><p>Create your account, then connect the inboxes you’d like to lend for email tests.</p>
     <form id="auth-form">
       <div class="field"><label class="label" for="j-name">Your name</label><input class="input" id="j-name" value="${esc(invite.name)}" autocomplete="name" maxlength="100"></div>
@@ -793,12 +802,15 @@ async function renderJoin(token) {
   };
 }
 
+const themeIcon = () => ({dark: 'moon', light: 'sun'})[document.documentElement.dataset.theme] || 'monitor';
+const themeButton = (cls = 'theme-float') => `<button class="btn ghost sm icon ${cls}" data-act="theme" title="Theme: ${document.documentElement.dataset.theme || 'system'}" aria-label="Switch light or dark theme">${icon(themeIcon())}</button>`;
+
 // ------------------------------------------------------------------ auth view
 
 function renderAuth(message = '') {
   stopPolling();
   const setup = ui.authMode === 'setup';
-  root.innerHTML = `<div class="auth"><div class="auth-card"><div class="logo">${LOGO}</div>
+  root.innerHTML = `<div class="auth">${themeButton()}<div class="auth-card"><div class="logo">${LOGO}</div>
     <h1>${setup ? 'Create your admin login' : 'Sign in to Mail Mantis'}</h1><p>${setup ? 'Use the one-time setup key from your server.' : 'Your private deliverability workspace.'}</p>
     <form id="auth-form">
       ${setup ? '<div class="field"><label class="label" for="a-key">Setup key</label><input class="input" id="a-key" type="password" required autocomplete="off"></div>' : ''}
@@ -877,7 +889,8 @@ const ACTIONS = {
   'set-theme'(el, v = el.dataset.v) {
     if (v === 'system') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = v;
     try { localStorage.setItem('mm-theme', v); } catch (e) { /* storage blocked */ }
-    render(true);
+    if (S && S.role !== 'member') render(true);
+    else document.querySelectorAll('[data-act="theme"]').forEach(b => { b.innerHTML = icon(themeIcon()); b.title = 'Theme: ' + (document.documentElement.dataset.theme || 'system'); });
   },
   filter(el) { ui.filter = el.dataset.v; if (ui.page === 'emails') render(true); },
   async refresh(el) { await withBusy(el, () => refreshPlacements(false)); },
@@ -957,6 +970,27 @@ const ACTIONS = {
       const r = await api('message_action', {id: el.dataset.id, op: el.dataset.v});
       await load();
       toast(r.message);
+    });
+  },
+  async install() {
+    const prompt = ui.installPrompt;
+    ui.installPrompt = null;
+    render(true);
+    if (prompt) { prompt.prompt(); await prompt.userChoice; }
+  },
+  async 'test-gemini'(el) {
+    await withBusy(el, async () => {
+      ui.checks.gemini = await api('test_gemini');
+      render(true);
+    });
+  },
+  async 'use-model'(el) {
+    await withBusy(el, async () => {
+      await api('save_ai', {provider: 'gemini', model: el.dataset.v, key: ''});
+      delete ui.forms.ai;
+      ui.checks.gemini = {works: true, message: 'Now using ' + el.dataset.v + '.'};
+      await load();
+      toast('Gemini model changed to ' + el.dataset.v);
     });
   },
   async 'check-oauth'(el) {
@@ -1289,6 +1323,18 @@ async function switchDialog() {
     toast(r.message);
   } catch (err) { toast(err.message, 'err'); }
 }
+
+// ------------------------------------------------------------------ app install (PWA)
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => { /* offline install not available */ }));
+}
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  ui.installPrompt = e;
+  if (S && S.role !== 'member') render(false);
+});
+window.addEventListener('appinstalled', () => { ui.installPrompt = null; if (S && S.role !== 'member') render(false); });
 
 // ------------------------------------------------------------------ start
 

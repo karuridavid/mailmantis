@@ -209,6 +209,18 @@ check(len(call("get_config")["senders"]) == 1, "inactive domain deleted")
 g = [c for c in calls("gemini") if c[2]]
 check(g and g[-1][3], "website brief sends fetched page text with URL context + search")
 
+# --- Gemini key test and fallbacks
+r = call("test_gemini")
+check(r["works"] and "gemini-3.8-flash" in r["message"], "test_gemini: saved model answers")
+call("save_ai", provider="gemini", model="gemini-zero", key="")
+r = call("test_gemini")
+check(not r["works"] and "no quota" in r["message"] and r.get("suggest") == "gemini-3.8-flash", "test_gemini: zero quota suggests a working model")
+call("save_ai", provider="gemini", model="gemini-nosearch", key="")
+call("analyze_website")
+g = [c for c in calls("gemini") if c[1] == "gemini-nosearch"]
+check(len(g) == 2 and g[0][4] and not g[1][4], "brief retries without search when search quota is used up")
+call("save_ai", provider="gemini", model="gemini-3.8-flash", key="")
+
 # --- Microsoft (Outlook) inboxes
 call("microsoft_oauth_start", expect=400, purpose="connect")
 call("save_microsoft", expect=400, client_id="not-a-guid", client_secret="x")

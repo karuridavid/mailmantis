@@ -413,8 +413,49 @@ def lookup_placement(conn, seed: dict, message_id: str, token: str = "", sent_af
 
 # ---------------------------------------------------------------- Gemini
 
+class GeminiError(ValueError):
+    """A Gemini failure with a kind: key, model, zero_quota, minute, day, search or other."""
+
+    def __init__(self, message: str, kind: str = "other"):
+        super().__init__(message)
+        self.kind = kind
+
+
+def gemini_error(exc: urllib.error.HTTPError, model: str) -> GeminiError:
+    """Turn Google's error body into a specific, actionable message (a 429 isn't always a rate limit)."""
+    try:
+        error = json.loads(exc.read() or b"{}").get("error", {}) or {}
+    except (ValueError, OSError):
+        error = {}
+    message = str(error.get("message", ""))
+    details = error.get("details", []) or []
+    violations = [v for d in details if isinstance(d, dict) for v in (d.get("violations") or []) if isinstance(v, dict)]
+    quota = " ".join(str(v.get("quotaId", "")) + " " + str(v.get("quotaMetric", "")) for v in violations)
+    retry = next((str(d["retryDelay"]) for d in details if isinstance(d, dict) and d.get("retryDelay")), "")
+    # Logged without the key so the cause shows up in the server logs.
+    print(f"Gemini error {exc.code} {error.get('status', '')} model={model} quota={quota.strip()[:160]} retry={retry}", flush=True)
+    if "API key not valid" in message or "API_KEY_INVALID" in json.dumps(details):
+        return GeminiError("Gemini rejected the API key. Check it in Settings", "key")
+    if exc.code in (401, 403):
+        return GeminiError(f"Gemini doesn’t allow this key to use {model}. Try another model in Settings", "model")
+    if exc.code == 404:
+        return GeminiError(f"Gemini doesn’t recognise the model “{model}”. Check it in Settings", "model")
+    if exc.code == 429:
+        if "limit: 0" in message or any(str(v.get("quotaValue", "")) == "0" for v in violations):
+            return GeminiError(f"Your Gemini key has no quota for {model}: Google reports a limit of 0, so this isn’t caused by usage. "
+                               "Use Test key in Settings to find a model that works, or turn on billing for the key’s project in Google AI Studio",
+                               "zero_quota")
+        if "search" in (message + quota).lower() or "grounding" in (message + quota).lower():
+            return GeminiError("Gemini’s Google Search quota is used up for now", "search")
+        if "perday" in quota.lower().replace("_", "") or "per day" in message.lower():
+            return GeminiError(f"Today’s Gemini quota for {model} is used up. It resets at midnight Pacific time, or try another model in Settings", "day")
+        return GeminiError(f"Gemini’s per-minute limit for {model} was reached. Wait {retry or 'a minute'} and try again", "minute")
+    detail = " ".join(message.split())[:160]
+    return GeminiError("Gemini could not complete this request" + (f": {detail}" if detail else ". Check the model and API settings"))
+
+
 def gemini_request(api_key: str, model: str, prompt: str, *, schema_def: dict | None = None,
-                   research: bool = False) -> tuple[dict, list[str]]:
+                   research: bool = False, search: bool = True) -> tuple[dict, list[str]]:
     """Call Gemini and parse a JSON answer.
 
     research=True turns on URL context and Google Search grounding; those answers
@@ -435,7 +476,7 @@ def gemini_request(api_key: str, model: str, prompt: str, *, schema_def: dict | 
         config["thinkingConfig"] = {"thinkingLevel": "low"}
     payload = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": config}
     if research:
-        payload["tools"] = [{"url_context": {}}, {"google_search": {}}]
+        payload["tools"] = [{"url_context": {}}] + ([{"google_search": {}}] if search else [])
     url = "https://generativelanguage.googleapis.com/v1beta/models/" + urllib.parse.quote(model, safe="._-") + ":generateContent"
     request = urllib.request.Request(url, data=json.dumps(payload).encode(), headers={
         "Content-Type": "application/json", "x-goog-api-key": api_key,
@@ -444,13 +485,7 @@ def gemini_request(api_key: str, model: str, prompt: str, *, schema_def: dict | 
         with urllib.request.urlopen(request, timeout=90) as response:
             result = json.loads(response.read())
     except urllib.error.HTTPError as exc:
-        if exc.code in (401, 403):
-            raise ValueError("Gemini rejected the key or does not allow this model") from None
-        if exc.code == 404:
-            raise ValueError("Gemini does not recognise this model name. Check it in Settings") from None
-        if exc.code == 429:
-            raise ValueError("Gemini rate limit reached. Wait a little and try again") from None
-        raise ValueError("Gemini could not complete this request. Check the model and API settings") from None
+        raise gemini_error(exc, model) from None
     except (OSError, TimeoutError, json.JSONDecodeError):
         raise ValueError("Could not get a response from Gemini. Try again") from None
     try:
@@ -516,7 +551,13 @@ def summarize_website(api_key: str, model: str, domain: str, website_urls: list[
         "what the business does, leave summary empty and explain briefly in note.\n"
         f"<page_text>\n{page_text or '(the website could not be fetched)'}\n</page_text>"
     )
-    result, sources = gemini_request(api_key, model, prompt, research=True)
+    try:
+        result, sources = gemini_request(api_key, model, prompt, research=True)
+    except GeminiError as exc:
+        if exc.kind not in ("search", "minute", "day"):
+            raise
+        # Search grounding has its own quota; the fetched page text is usually enough without it.
+        result, sources = gemini_request(api_key, model, prompt, research=True, search=False)
     summary = " ".join(str(result.get("summary", "")).split())[:6000]
     if not summary:
         note = " ".join(str(result.get("note", "")).split())[:300]
@@ -857,6 +898,57 @@ def act_delete_sender(conn, body, user, req=None):
         cur.execute("DELETE FROM senders WHERE id=%s", (sender["id"],))
     conn.commit()
     return {"ok": True}
+
+
+def gemini_models(api_key: str) -> list[str]:
+    """Text models this key can call, newest first (listing models doesn't use generation quota)."""
+    names, token = [], ""
+    for _ in range(5):
+        url = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=200" + (f"&pageToken={urllib.parse.quote(token)}" if token else "")
+        request = urllib.request.Request(url, headers={"x-goog-api-key": api_key})
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                page = json.loads(response.read())
+        except urllib.error.HTTPError as exc:
+            raise gemini_error(exc, "model list") from None
+        except (OSError, TimeoutError, json.JSONDecodeError):
+            raise ValueError("Could not reach Gemini. Try again") from None
+        for item in page.get("models", []):
+            name = str(item.get("name", "")).removeprefix("models/")
+            if "generateContent" in item.get("supportedGenerationMethods", []) and name.startswith("gemini-") and \
+                    not any(word in name for word in ("image", "tts", "audio", "live", "embedding", "vision", "robotics", "computer")):
+                names.append(name)
+        token = page.get("nextPageToken", "")
+        if not token:
+            break
+    version = lambda n: [int(x) for x in re.findall(r"\d+", n)[:2]] + [0 if "lite" in n else 1, 0 if "preview" in n or "exp" in n else 1]
+    return sorted(set(names), key=version, reverse=True)
+
+
+def act_test_gemini(conn, body, user, req=None):
+    """Check the saved key and model with a tiny request; if the model has no quota, find one that works."""
+    api_key, model = gemini_config(conn)
+    model = model or DEFAULT_MODEL
+    available = gemini_models(api_key)
+    ping = lambda name: gemini_request(api_key, name, 'Respond only with JSON {"ok": true}.')
+    try:
+        ping(model)
+        return {"ok": True, "works": True, "message": f"The key works and {model} answered."}
+    except GeminiError as exc:
+        if exc.kind != "zero_quota" and not (exc.kind == "model" and available):
+            return {"ok": True, "works": False, "message": str(exc)}
+        failure = str(exc)
+    tried = 0
+    for alternative in [n for n in available if n != model and "flash" in n]:
+        if tried >= 4:
+            break
+        tried += 1
+        try:
+            ping(alternative)
+            return {"ok": True, "works": False, "message": failure, "suggest": alternative}
+        except GeminiError:
+            continue
+    return {"ok": True, "works": False, "message": failure + (". No other Flash model answered either, so the key’s project needs quota or billing in Google AI Studio" if tried else "")}
 
 
 def act_save_ai(conn, body, user, req=None):
@@ -1351,7 +1443,7 @@ ACTIONS = {
     "remove_seed": act_remove_seed, "google_oauth_start": act_google_oauth_start,
     "microsoft_oauth_start": act_microsoft_oauth_start, "save_microsoft": act_save_microsoft,
     "connect_imap": act_connect_imap, "message_action": act_message_action,
-    "check_oauth": act_check_oauth, "create_invite": act_create_invite, "revoke_invite": act_revoke_invite,
+    "check_oauth": act_check_oauth, "test_gemini": act_test_gemini, "create_invite": act_create_invite, "revoke_invite": act_revoke_invite,
     "remove_person": act_remove_person, "invite_link": act_invite_link, "renew_invite": act_renew_invite,
     "change_password": act_change_password,
 }

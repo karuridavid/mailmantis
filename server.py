@@ -19,7 +19,7 @@ from urllib.parse import urlparse
 ROOT = Path(__file__).resolve().parent
 DATA_DIR = Path(os.getenv("DATA_DIR", ROOT / ".data"))
 STATIC = {"/": "index.html", "/index.html": "index.html", "/app.js": "app.js", "/app.css": "app.css",
-          "/robots.txt": "robots.txt"}
+          "/robots.txt": "robots.txt", "/sw.js": "sw.js", "/manifest.webmanifest": "manifest.webmanifest"}
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "[::1]")
 
 
@@ -114,6 +114,7 @@ def announce_setup_key() -> None:
 def main() -> None:
     mimetypes.add_type("text/javascript", ".js")
     mimetypes.add_type("font/woff2", ".woff2")
+    mimetypes.add_type("application/manifest+json", ".webmanifest")
     port = int(os.getenv("PORT", "8080"))
     host = os.getenv("HOST", "0.0.0.0")
     announce_setup_key()
