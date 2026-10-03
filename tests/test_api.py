@@ -1,0 +1,184 @@
+"""End-to-end API test. Start tests/fake_server.py first (fake Gmail/SMTP/Gemini, real Postgres, empty database)."""
+import json, re, sys, urllib.request, urllib.error, urllib.parse, http.client
+
+BASE = "http://127.0.0.1:18080"
+cookie = ""
+failures = 0
+
+
+def call(action, expect=200, **data):
+    global cookie
+    req = urllib.request.Request(BASE + "/api/app", data=json.dumps({"action": action, **data}).encode(),
+                                 headers={"Content-Type": "application/json", "Cookie": cookie}, method="POST")
+    try:
+        resp = urllib.request.urlopen(req)
+        status, body, headers = resp.status, json.loads(resp.read()), resp.headers
+    except urllib.error.HTTPError as e:
+        status, body, headers = e.code, json.loads(e.read()), e.headers
+    set_cookie = headers.get("Set-Cookie", "")
+    if set_cookie:
+        m = re.match(r"mailmon_session=([^;]*)", set_cookie)
+        cookie = "mailmon_session=" + m.group(1) if m and m.group(1) else ""
+    check(status == expect, f"{action} -> {status} (expected {expect}) {body if status != expect else ''}")
+    return body
+
+
+def check(cond, label):
+    global failures
+    print(("PASS " if cond else "FAIL ") + label)
+    if not cond:
+        failures += 1
+
+
+def hook(path, **data):
+    req = urllib.request.Request(BASE + "/__test/" + path, data=json.dumps(data).encode(), method="POST")
+    return json.loads(urllib.request.urlopen(req).read())
+
+
+def calls(kind):
+    return [c for c in hook("calls")["calls"] if c[0] == kind]
+
+
+def oauth(purpose, seed_id="", name=""):
+    """Start an OAuth flow and follow the callback like Google would."""
+    url = call("google_oauth_start", purpose=purpose, seed_id=seed_id, name=name)["url"]
+    state = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["state"][0]
+    conn = http.client.HTTPConnection("127.0.0.1", 18080)
+    conn.request("GET", "/api/google_oauth_callback?" + urllib.parse.urlencode({"state": state, "code": "c" + purpose}))
+    resp = conn.getresponse()
+    return resp.status, resp.getheader("Location")
+
+
+# --- auth
+call("status")
+call("setup_admin", expect=401, setup_key="wrong", email="a@x.com", password="x" * 12)
+call("setup_admin", setup_key="setup-key-123", email="admin@x.com", password="correct horse battery")
+check(cookie != "", "session cookie set")
+call("setup_admin", expect=409, setup_key="setup-key-123", email="b@x.com", password="x" * 12)
+
+# --- Google OAuth client saved in Settings
+cfg = call("get_config")
+check(not cfg["google"]["ready"] and cfg["google"]["redirect_uri"] == BASE + "/api/google_oauth_callback", "redirect URI derived from request")
+call("google_oauth_start", expect=400, purpose="connect")
+call("save_google", expect=400, client_id="not-a-client-id", client_secret="s")
+call("save_google", expect=400, client_id="123.apps.googleusercontent.com", client_secret="")
+call("save_google", client_id="123.apps.googleusercontent.com", client_secret="shh")
+g = call("get_config")["google"]
+check(g["ready"] and g["source"] == "settings" and "secret" not in json.dumps(g), "google client saved, secret not exposed")
+
+# --- 1. sender
+call("test_sender", expect=400, email="hi@other.com", domain="example.com", smtp_host="h", smtp_port=587, password="p")
+call("test_sender", email="hi@example.com", domain="example.com", smtp_host="smtp.test", smtp_port=587, password="p")
+call("save_sender", expect=400, email="hi@example.com", domain="example.com", smtp_host="smtp.test", smtp_port=587, password="bad")
+call("save_sender", email="hi@example.com", domain="example.com", smtp_host="smtp.test", smtp_port=587, password="p", from_name="Example Co")
+cfg = call("get_config")
+check(cfg["sender"]["from_name"] == "Example Co" and cfg["sender"]["verified_at"], "sender saved, verified, with from name")
+check("password_enc" not in cfg["sender"], "sender password not exposed")
+
+# --- 2. brief
+call("generate_drafts", expect=400, seed_ids=["x"])  # no gemini/brief yet
+call("save_ai", expect=400, provider="gemini", model="", key="")
+call("save_ai", provider="gemini", model="", key="AIza-test")
+check(call("get_config")["ai_model"] == "gemini-3.8-flash", "default model stored")
+summary = call("analyze_website")
+check("Pottery" in summary["summary"], "website summary returned")
+call("save_website_brief", summary=summary["summary"] + " Edited by admin.", sources=summary["sources"])
+check(call("get_config")["website_summary"].endswith("Edited by admin."), "edited brief saved")
+
+# --- seeds via OAuth
+status, loc = oauth("connect", name="Jane")
+check(status == 302 and loc == "/?google=connected", f"connect callback -> {loc}")
+check(calls("exchange_code")[-1][1:] == [BASE + "/api/google_oauth_callback", "123.apps.googleusercontent.com"], "code exchanged with saved client + derived redirect")
+hook("profile", email="bob@workspace.io", scope="openid email https://www.googleapis.com/auth/gmail.modify")
+status, loc = oauth("connect", name="")
+check(loc == "/?google=connected", "second seed connected without send scope")
+seeds = {s["email"]: s for s in call("get_config")["seeds"]}
+jane, bob = seeds["jane@gmail.com"], seeds["bob@workspace.io"]
+check(jane["gmail_send_enabled"] and not bob["gmail_send_enabled"], "send permission follows granted scope")
+check(jane["name"] == "Jane" and bob["provider"] == "workspace", "seed name/provider")
+
+# wrong account on a filter flow is rejected
+hook("profile", email="someone@else.com")
+status, loc = oauth("filter", seed_id=jane["id"])
+check(loc.startswith("/?google=filter_error"), f"filter with wrong account rejected -> {loc}")
+hook("profile", email="jane@gmail.com", scope="openid email https://www.googleapis.com/auth/gmail.settings.basic")
+status, loc = oauth("filter", seed_id=jane["id"])
+check(loc == "/?google=filter_added", f"filter added -> {loc}")
+check(calls("create_filter")[-1] == ["create_filter", "hi@example.com", True, False], "never-spam filter for sender email")
+jane = {s["email"]: s for s in call("get_config")["seeds"]}["jane@gmail.com"]
+check(jane["filter_never_spam"] is True and jane["filter_important"] is False, "filter status stored after creation")
+check(jane["gmail_send_enabled"], "send permission kept after filter re-consent")
+res = call("check_filters")
+check(all("never_spam" in r for r in res["results"].values()), "check_filters reads all oauth seeds")
+
+# --- 3. drafts
+res = call("generate_drafts", seed_ids=[jane["id"], bob["id"]], theme="autumn hours")
+check(len(res["ids"]) == 2, "one Gemini draft per seed")
+drafts = {d["id"]: d for d in call("get_config")["drafts"]}
+d1, d2 = drafts[res["ids"][0]], drafts[res["ids"][1]]
+check(d1["status"] == "draft" and d1["kind"] == "domain" and d1["to_email"] == "jane@gmail.com", "draft fields")
+check("MAIL SIGNAL" not in d1["subject"] + d1["body"], "no test marker in drafts")
+call("send_draft", expect=400, id=d1["id"])  # not ready
+call("save_draft", id=d1["id"], subject="Autumn hours", body="Hi Jane, ...")
+call("set_draft_status", id=d1["id"], status="ready")
+blank = call("create_draft", seed_id=bob["id"])["id"]
+call("set_draft_status", expect=400, id=blank, status="ready")  # empty draft can't be ready
+call("write_with_gemini", id=blank, guidance="short")
+check({d["id"]: d for d in call("get_config")["drafts"]}[blank]["body"].startswith("Hello"), "Gemini fills blank draft")
+call("delete_draft", id=blank)
+
+# --- send
+res = call("send_draft", id=d1["id"])
+sent = {d["id"]: d for d in call("get_config")["drafts"]}[d1["id"]]
+check(sent["status"] == "sent" and sent["message_id"] and sent["sent_at"], "domain email sent")
+check(calls("smtp_send")[-1][1:4] == ["hi@example.com", "Example Co", "jane@gmail.com"], "sent via SMTP with from name")
+call("send_draft", expect=400, id=d1["id"])  # no double send
+call("delete_draft", expect=400, id=d1["id"])
+call("save_draft", expect=400, id=d1["id"], subject="x", body="y")
+
+# --- 4. placement
+res = call("check_placement")
+check(res["results"] and res["results"][0]["placement"] == "Not found", "pending check: not found yet")
+hook("placement", message_id=sent["message_id"], result={"placement": "Inbox", "tab": "Promotions", "labels": "CATEGORY_PROMOTIONS,INBOX", "gmail_id": "g1", "thread_id": "t1"})
+res = call("check_placement")
+check(res["results"][0]["placement"] == "Inbox", "pending check picks up Inbox")
+sent = {d["id"]: d for d in call("get_config")["drafts"]}[d1["id"]]
+check(sent["inbox_tab"] == "Promotions" and sent["gmail_thread_id"] == "t1", "tab and thread stored")
+check(call("check_placement")["results"] == [], "found emails not re-checked automatically")
+call("check_placement", id=sent["id"])
+check(len(call("get_config")["activity"]) == 3, "each check logged")
+call("check_placement", expect=400, id=d2["id"])  # unsent
+
+# --- 6. reply
+call("create_draft", expect=400, parent_id=d2["id"])  # parent unsent
+reply_id = call("create_draft", parent_id=sent["id"])["id"]
+r = {d["id"]: d for d in call("get_config")["drafts"]}[reply_id]
+check(r["kind"] == "reply" and r["from_email"] == "jane@gmail.com" and r["to_email"] == "hi@example.com" and r["subject"] == "Re: Autumn hours", "reply draft addressed seed -> sender")
+call("write_with_gemini", id=reply_id)
+call("set_draft_status", id=reply_id, status="ready")
+call("send_draft", id=reply_id)
+g = calls("gmail_send")[-1]
+check(g[1:3] == ["jane@gmail.com", "hi@example.com"] and g[4] == sent["message_id"] and g[5] == "t1", "reply sent via Gmail in the same thread")
+
+# reply from a seed without send permission
+d2r = {d["id"]: d for d in call("get_config")["drafts"]}[d2["id"]]
+call("set_draft_status", id=d2["id"], status="ready"); call("send_draft", id=d2["id"])
+rb = call("create_draft", parent_id=d2["id"])["id"]
+call("save_draft", id=rb, subject="Re: x", body="thanks"); call("set_draft_status", id=rb, status="ready")
+err = call("send_draft", expect=400, id=rb)
+check("Allow sending replies" in err["error"], "reply blocked until send permission granted")
+
+# --- seed management
+call("set_seed_enabled", id=bob["id"], enabled=False)
+call("generate_drafts", expect=400, seed_ids=[bob["id"]])
+call("rename_seed", id=bob["id"], name="Bob")
+check({s["id"]: s for s in call("get_config")["seeds"]}[bob["id"]]["name"] == "Bob", "rename seed")
+
+# --- removed actions are gone
+call("run_check", expect=400)
+call("rotate_cron", expect=400)
+
+# --- logout
+call("logout"); call("get_config", expect=401)
+print("\nFAILURES:", failures)
+sys.exit(1 if failures else 0)

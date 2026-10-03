@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>About Mail Signal</title>
+  <meta name="description" content="Why Mail Signal exists, how it works, the tech stack, and how it handles your data.">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
+  <link rel="preload" href="/assets/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/assets/site.css">
+</head>
+<body class="docs-page">
+<header class="nav"><div class="wrap">
+  <a class="brand" href="/"><span class="logo"><svg viewBox="0 0 24 24"><rect x="3" y="13" width="4" height="8" rx="1.3" fill="currentColor"/><rect x="10" y="8" width="4" height="13" rx="1.3" fill="currentColor"/><rect x="17" y="3" width="4" height="18" rx="1.3" fill="#10b981"/></svg></span>Mail Signal</a>
+  <nav class="nav-links"><a href="/#how">How it works</a><a href="/#features">Features</a><a href="/self-host">Self-host</a><a href="/about" aria-current="page">About</a></nav>
+  <div class="right"><a class="btn sm" href="https://github.com/karuridavid/mail-signal"><svg class="i" viewBox="0 0 24 24"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>GitHub</a></div>
+</div></header>
+
+<main class="wrap docs">
+  <nav class="toc" aria-label="On this page"><b>ON THIS PAGE</b>
+    <a href="#why">Why it exists</a><a href="#architecture">Architecture</a><a href="#stack">Tech stack</a><a href="#security">Security & privacy</a><a href="#faq">FAQ</a><a href="#credits">Credits</a></nav>
+
+  <article class="prose">
+    <h1>About Mail Signal</h1>
+    <p class="lead">A small, honest tool for people who send email from their own domain and want to know where it lands.</p>
+
+    <h2 id="why">Why it exists</h2>
+    <p>When you start sending from a new domain, Gmail has no history to go on. The usual advice is to send a few normal emails to people who will open and reply, check where they land, and fix authentication when they land in Spam. Doing that by hand means juggling an SMTP account, several Gmail tabs and a spreadsheet.</p>
+    <p>Mail Signal puts that loop in one private dashboard. It deliberately stops short of automation: there are no schedules, no auto-replies and no message moving. Every send and every reply is a person’s decision, so what you measure is how Gmail treats a real sender.</p>
+
+    <h2 id="architecture">Architecture</h2>
+    <div class="diagram"><svg viewBox="0 0 720 250" role="img" aria-label="Browser talks to the Mail Signal API, which uses Postgres, SMTP, the Gmail API and Gemini">
+      <rect class="box" x="10" y="95" width="130" height="60" rx="10"/><text x="75" y="122" text-anchor="middle" font-size="14" font-weight="600">Dashboard</text><text x="75" y="141" text-anchor="middle" font-size="12" class="muted-t">HTML · CSS · JS</text>
+      <rect class="box" x="220" y="85" width="170" height="80" rx="10"/><text x="305" y="117" text-anchor="middle" font-size="14" font-weight="600">Mail Signal API</text><text x="305" y="136" text-anchor="middle" font-size="12" class="muted-t">Python · one endpoint</text><text x="305" y="152" text-anchor="middle" font-size="12" class="muted-t">Docker or Vercel</text>
+      <line x1="140" y1="125" x2="220" y2="125"/>
+      <rect class="box" x="480" y="10" width="220" height="44" rx="10"/><text x="590" y="37" text-anchor="middle" font-size="13">Postgres: settings, drafts, results</text>
+      <rect class="box" x="480" y="68" width="220" height="44" rx="10"/><text x="590" y="95" text-anchor="middle" font-size="13">SMTP: your domain sender</text>
+      <rect class="box" x="480" y="126" width="220" height="44" rx="10"/><text x="590" y="153" text-anchor="middle" font-size="13">Gmail API: seed inboxes</text>
+      <rect class="box" x="480" y="184" width="220" height="44" rx="10"/><text x="590" y="211" text-anchor="middle" font-size="13">Gemini: drafts and brief</text>
+      <path d="M390 115 C 440 115, 430 32, 480 32"/><path d="M390 120 C 440 120, 440 90, 480 90"/><path d="M390 130 C 440 130, 440 148, 480 148"/><path d="M390 140 C 440 140, 430 206, 480 206"/>
+    </svg></div>
+    <p>The dashboard is a static page that calls a single <code>POST /api/app</code> endpoint with an <code>action</code>. The API stores everything in Postgres and is the only part that talks to SMTP, Gmail and Gemini. Placement is found by searching the seed inbox for the exact <code>Message-ID</code> that was sent and reading its labels: <code>SPAM</code>, <code>INBOX</code>, and the tab category.</p>
+
+    <h2 id="stack">Tech stack</h2>
+    <div class="stack-grid">
+      <div class="stack-item"><b>Python 3.12</b><span>Standard-library HTTP server and email modules; no web framework.</span></div>
+      <div class="stack-item"><b>PostgreSQL 16</b><span>Via psycopg 3. The schema creates and upgrades itself on start.</span></div>
+      <div class="stack-item"><b>cryptography</b><span>Fernet encryption for SMTP keys, OAuth tokens and API keys at rest.</span></div>
+      <div class="stack-item"><b>Vanilla JS & CSS</b><span>No build step and no dependencies. Geist and Geist Mono are bundled locally.</span></div>
+      <div class="stack-item"><b>Gmail API</b><span>OAuth seed inboxes: placement lookup, threaded replies, filters.</span></div>
+      <div class="stack-item"><b>Gemini API</b><span>Website summaries and draft writing, with structured JSON output.</span></div>
+      <div class="stack-item"><b>Docker Compose + Caddy</b><span>Self-hosting with Postgres and optional automatic HTTPS.</span></div>
+      <div class="stack-item"><b>Vercel + Neon</b><span>Serverless option: Python Functions with managed Postgres.</span></div>
+    </div>
+
+    <h2 id="security">Security & privacy</h2>
+    <ul>
+      <li><b>Single admin.</b> Passwords are hashed with PBKDF2-SHA256 (310,000 rounds). Sessions use random tokens stored as hashes, in an <code>HttpOnly</code>, <code>SameSite=Strict</code> cookie. Login attempts are rate-limited per IP.</li>
+      <li><b>Secrets encrypted at rest.</b> SMTP keys, Google refresh tokens, the Gemini key and the OAuth client secret are encrypted with your <code>APP_ENCRYPTION_KEY</code>. API responses never return them.</li>
+      <li><b>Narrow Gmail use.</b> Placement checks read one message’s labels. Nothing is moved, archived, marked or deleted. Filters and replies only happen when you click.</li>
+      <li><b>No telemetry.</b> Your instance talks only to your database, your SMTP provider, Google’s Gmail and OAuth endpoints, and Gemini if you enable it.</li>
+      <li><b>Not indexed.</b> Dashboard pages send <code>noindex</code> headers and a <code>robots.txt</code> that disallows crawling.</li>
+    </ul>
+
+    <h2 id="faq">FAQ</h2>
+    <details><summary>Will this get my email into the inbox?</summary><p>No tool can promise that. Mail Signal shows you where mail lands and gives you a calm way to send real, varied emails and replies. Authentication (SPF, DKIM, DMARC), a reputable SMTP provider, and real recipients who engage matter most.</p></details>
+    <details><summary>Does it send or reply automatically?</summary><p>No. Every email and every reply is sent by you pressing Send. Placement checks run automatically while the dashboard is open, and they are read-only.</p></details>
+    <details><summary>Can I use it for outreach or newsletters?</summary><p>No. It sends one email at a time to inboxes you own and connect with Google. It has no lists, imports or campaigns.</p></details>
+    <details><summary>Which inboxes are supported?</summary><p>Gmail and Google Workspace seed inboxes, connected with Google sign-in. The sender can be any SMTP provider on ports 587 or 465.</p></details>
+    <details><summary>Do I need Gemini?</summary><p>No. You can write the business brief and every email and reply yourself. Gemini only saves time.</p></details>
+
+    <h2 id="credits">Credits</h2>
+    <p>Built by David Karuri. Released under the MIT license. Fonts: <a href="https://vercel.com/font">Geist and Geist Mono</a> by Vercel and basement.studio, under the SIL Open Font License.</p>
+  </article>
+</main>
+
+<footer><div class="wrap">
+  <a class="brand" href="/"><span class="logo"><svg viewBox="0 0 24 24"><rect x="3" y="13" width="4" height="8" rx="1.3" fill="currentColor"/><rect x="10" y="8" width="4" height="13" rx="1.3" fill="currentColor"/><rect x="17" y="3" width="4" height="18" rx="1.3" fill="#10b981"/></svg></span>Mail Signal</a>
+  <span>MIT licensed · Built by David Karuri</span>
+  <nav><a href="/self-host">Self-host</a><a href="/about">About</a><a href="https://github.com/karuridavid/mail-signal">GitHub</a></nav>
+</div></footer>
+<script src="/assets/site.js" defer></script>
+</body>
+</html>

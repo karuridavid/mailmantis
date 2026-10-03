@@ -1,0 +1,22 @@
+# Secrets and local state
+.env
+.env.*
+!.env.example
+.vercel/
+.data/
+.data-test/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Agent-local files
+.agents/
+skills-lock.json
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.vscode/

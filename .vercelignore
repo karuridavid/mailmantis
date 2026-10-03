@@ -1,0 +1,18 @@
+# The dashboard project deploys index.html, app.js, app.css, assets/, api/ and gmail_api.py.
+.env
+.env.*
+.vercel/
+.git/
+.agents/
+.data/
+.data-test/
+skills-lock.json
+__pycache__/
+*.pyc
+site/
+tests/
+server.py
+Dockerfile
+docker-compose.yml
+.dockerignore
+.env.example

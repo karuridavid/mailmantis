@@ -1,0 +1,56 @@
+# Self-hosted Mail Signal: `docker compose up -d`, then open http://localhost:8080
+# Keys are generated on first start; see `docker compose logs app` for the setup key.
+# For a public HTTPS domain: set DOMAIN and TRUST_PROXY=1 in .env, then
+# `docker compose --profile https up -d`.
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: mailsignal
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mailsignal}
+      POSTGRES_DB: mailsignal
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mailsignal"]
+      interval: 5s
+      retries: 10
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://mailsignal:${POSTGRES_PASSWORD:-mailsignal}@db:5432/mailsignal
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-}
+      ADMIN_SETUP_KEY: ${ADMIN_SETUP_KEY:-}
+      APP_URL: ${APP_URL:-}
+      TRUST_PROXY: ${TRUST_PROXY:-0}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
+    ports:
+      - "${PORT:-8080}:8080"
+    volumes:
+      - app-data:/data
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: ["https"]
+    restart: unless-stopped
+    command: caddy reverse-proxy --from ${DOMAIN:-localhost} --to app:8080
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - caddy-data:/data
+    depends_on:
+      - app
+
+volumes:
+  db-data:
+  app-data:
+  caddy-data:

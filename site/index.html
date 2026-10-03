@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Mail Signal: know where your domain’s email lands</title>
+  <meta name="description" content="Open-source, self-hosted dashboard for warming up a custom domain with Gmail inboxes you own. Draft with Gemini, send by hand, see Inbox, Promotions or Spam, and reply from one place.">
+  <meta property="og:title" content="Mail Signal">
+  <meta property="og:description" content="Know where your domain’s email lands. Self-hosted, manual by design.">
+  <meta property="og:image" content="/assets/shots/overview-light.jpg">
+  <meta name="color-scheme" content="light dark">
+  <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
+  <link rel="preload" href="/assets/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/assets/site.css">
+</head>
+<body>
+<header class="nav"><div class="wrap">
+  <a class="brand" href="/"><span class="logo"><svg viewBox="0 0 24 24"><rect x="3" y="13" width="4" height="8" rx="1.3" fill="currentColor"/><rect x="10" y="8" width="4" height="13" rx="1.3" fill="currentColor"/><rect x="17" y="3" width="4" height="18" rx="1.3" fill="#10b981"/></svg></span>Mail Signal</a>
+  <nav class="nav-links"><a href="#how">How it works</a><a href="#features">Features</a><a href="/self-host">Self-host</a><a href="/about">About</a></nav>
+  <div class="right"><a class="btn sm" href="https://github.com/karuridavid/mail-signal"><svg class="i" viewBox="0 0 24 24"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>GitHub</a></div>
+</div></header>
+
+<main>
+  <section class="hero"><div class="wrap">
+    <span class="eyebrow"><b>Open source</b> · self-hosted · MIT</span>
+    <h1>Know where your domain’s email <span>actually</span> lands.</h1>
+    <p class="lead">Mail Signal is a small dashboard for warming up a custom domain with Gmail inboxes you own. Draft ordinary emails with Gemini, send them yourself, see whether Gmail put them in Primary, Promotions or Spam, and reply from the same place.</p>
+    <div class="cta"><a class="btn primary" href="/self-host">Self-host in three commands</a><a class="btn" href="https://github.com/karuridavid/mail-signal">View the code</a></div>
+    <div class="cmd"><span class="p">$</span><code>git clone https://github.com/karuridavid/mail-signal && cd mail-signal && docker compose up -d</code><button class="copy-btn"></button></div>
+    <div class="shot"><div class="bar"><i></i><i></i><i></i></div>
+      <picture><source srcset="/assets/shots/overview-dark.jpg" media="(prefers-color-scheme: dark)"><img src="/assets/shots/overview-light.jpg" width="2720" height="1720" alt="Mail Signal overview: inbox rate, a per-inbox placement grid, items needing attention and recent activity"></picture></div>
+
+    <div class="principles">
+      <div class="principle"><svg class="i" viewBox="0 0 24 24"><path d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v2M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg><h3>Manual by design</h3><p>Nothing sends until you press Send. No schedules, no sequences.</p></div>
+      <div class="principle"><svg class="i" viewBox="0 0 24 24"><path d="m9 17-5-5 5-5"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg><h3>No bot replies</h3><p>Seed inboxes only reply when you write or approve a reply.</p></div>
+      <div class="principle"><svg class="i" viewBox="0 0 24 24"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg><h3>Read-only checks</h3><p>Placement checks read Gmail labels. Messages are never moved.</p></div>
+      <div class="principle"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><h3>Your keys, encrypted</h3><p>SMTP keys, Google tokens and API keys are encrypted at rest.</p></div>
+    </div>
+  </div></section>
+
+  <section class="block" id="how"><div class="wrap">
+    <div class="kicker">HOW IT WORKS</div>
+    <h2 class="title">A deliberate loop, one email at a time.</h2>
+    <p class="sub">Mail Signal keeps the whole cycle in one place: your sender, your inboxes, the drafts, where they landed and the replies.</p>
+    <div class="steps">
+      <div class="step"><h3>Connect</h3><p>Add your domain’s SMTP sender and test it. Connect Gmail or Workspace inboxes you own with Google sign-in.</p></div>
+      <div class="step"><h3>Brief</h3><p>Gemini reads your public website and drafts a business brief. You correct it, or write it yourself.</p></div>
+      <div class="step"><h3>Draft & send</h3><p>Get a different, ordinary email for each inbox. Edit, mark ready, and send each one by hand.</p></div>
+      <div class="step"><h3>Check & reply</h3><p>See Primary, Promotions or Spam for every send, then reply from the seed inbox in the same thread.</p></div>
+    </div>
+  </div></section>
+
+  <section class="block" id="features"><div class="wrap">
+    <div class="kicker">FEATURES</div>
+    <h2 class="title">Small, focused, and honest about what it measures.</h2>
+    <div class="features">
+      <div class="feature"><span class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span><h3>Inbox signal grid</h3><p>Every seed inbox against its latest sends. Problems stand out at a glance.</p></div>
+      <div class="feature"><span class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg></span><h3>Real Gmail placement</h3><p>Inbox tab included, read straight from Gmail’s labels.</p>
+        <div class="chips"><span class="chip" style="--c:var(--inbox)">Primary</span><span class="chip" style="--c:var(--tab)">Promotions</span><span class="chip" style="--c:var(--spam)">Spam</span></div></div>
+      <div class="feature"><span class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg></span><h3>Gemini drafts</h3><p>Ordinary emails written from a brief you approved. No invented offers, no hype.</p></div>
+      <div class="feature"><span class="ico"><svg class="i" viewBox="0 0 24 24"><path d="m9 17-5-5 5-5"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg></span><h3>Threaded replies</h3><p>Reply from any seed inbox, written by you or Gemini, sent through Gmail in the same thread.</p></div>
+      <div class="feature"><span class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span><h3>Verified Gmail filters</h3><p>Add “Never send to Spam” or “Mark important”, then read them back from Gmail to confirm.</p></div>
+      <div class="feature"><span class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span><h3>Runs anywhere</h3><p>Docker Compose with Postgres on your machine or server, or Vercel with Neon.</p></div>
+    </div>
+  </div></section>
+
+  <section class="block"><div class="wrap split">
+    <div>
+      <div class="kicker">THE EMAILS VIEW</div>
+      <h2 class="title">Every email, from draft to reply.</h2>
+      <p class="sub">A mail-client layout with colour-coded status. Open any email to edit it, send it, see its placement and timeline, or reply.</p>
+      <ul class="checks">
+        <li><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Draft → Ready → Sent, with a confirmation before anything leaves</li>
+        <li><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Placement checked automatically while the dashboard is open</li>
+        <li><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Keyboard friendly: <code>J</code>/<code>K</code> to move, <code>N</code> for new emails</li>
+        <li><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Light and dark themes</li>
+      </ul>
+    </div>
+    <div class="shot"><div class="bar"><i></i><i></i><i></i></div>
+      <picture><source srcset="/assets/shots/emails-dark.jpg" media="(prefers-color-scheme: dark)"><img src="/assets/shots/emails-light.jpg" width="2720" height="1720" loading="lazy" alt="Emails view: list of emails with status pills and an open email showing its placement in the Primary inbox, a timeline and a reply"></picture></div>
+  </div></section>
+
+  <section class="block"><div class="wrap split">
+    <div class="terminal"><div class="bar"><i></i><i></i><i></i><span>~/mail-signal</span></div>
+<pre><span class="p">$</span> git clone https://github.com/karuridavid/mail-signal
+<span class="p">$</span> cd mail-signal && docker compose up -d
+<span class="p">$</span> docker compose logs app | grep "setup key"
+<span class="c"># First sign-in: open the dashboard and use this</span>
+<span class="c"># one-time setup key: 9xQ…</span>
+<span class="c"># → http://localhost:8080</span></pre></div>
+    <div>
+      <div class="kicker">SELF-HOST</div>
+      <h2 class="title">Up and running in three commands.</h2>
+      <p class="sub">Docker Compose starts Postgres and the app, and generates the encryption key on first boot. Add HTTPS for a public domain with one more flag, or deploy to Vercel with Neon.</p>
+      <div class="cta" style="justify-content:flex-start"><a class="btn primary" href="/self-host">Read the guide</a><a class="btn" href="/about#stack">Tech stack</a></div>
+    </div>
+  </div></section>
+
+  <div class="wrap"><div class="notice"><svg class="i" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></svg>
+    <div><h3>For your own domains and inboxes</h3><p>Mail Signal sends one email at a time to inboxes you own. It is not a bulk sender or an outreach tool, and it can’t guarantee inbox placement. Good authentication (SPF, DKIM, DMARC) and real engagement matter far more than any tool.</p></div></div></div>
+
+  <div class="wrap"><div class="final">
+    <h2 class="title" style="margin:0 auto 12px">Run your own signal.</h2>
+    <p class="sub" style="margin:0 auto">Free and open source under the MIT license.</p>
+    <div class="cta"><a class="btn primary" href="/self-host">Self-host guide</a><a class="btn" href="https://github.com/karuridavid/mail-signal">Star on GitHub</a></div>
+  </div></div>
+</main>
+
+<footer><div class="wrap">
+  <a class="brand" href="/"><span class="logo"><svg viewBox="0 0 24 24"><rect x="3" y="13" width="4" height="8" rx="1.3" fill="currentColor"/><rect x="10" y="8" width="4" height="13" rx="1.3" fill="currentColor"/><rect x="17" y="3" width="4" height="18" rx="1.3" fill="#10b981"/></svg></span>Mail Signal</a>
+  <span>MIT licensed · Built by David Karuri</span>
+  <nav><a href="/self-host">Self-host</a><a href="/about">About</a><a href="https://github.com/karuridavid/mail-signal">GitHub</a></nav>
+</div></footer>
+<script src="/assets/site.js" defer></script>
+</body>
+</html>

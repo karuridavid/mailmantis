@@ -1,0 +1,10 @@
+.git
+.env
+.env.*
+.vercel
+.agents
+.data
+site
+tests
+__pycache__
+*.pyc
