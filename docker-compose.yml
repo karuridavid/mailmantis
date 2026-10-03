@@ -1,4 +1,4 @@
-# Self-hosted Mail Signal: `docker compose up -d`, then open http://localhost:8080
+# Self-hosted Mail Mantis: `docker compose up -d`, then open http://localhost:8080
 # Keys are generated on first start; see `docker compose logs app` for the setup key.
 # For a public HTTPS domain: set DOMAIN and TRUST_PROXY=1 in .env, then
 # `docker compose --profile https up -d`.
@@ -7,13 +7,13 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     environment:
-      POSTGRES_USER: mailsignal
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mailsignal}
-      POSTGRES_DB: mailsignal
+      POSTGRES_USER: mailmantis
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mailmantis}
+      POSTGRES_DB: mailmantis
     volumes:
       - db-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U mailsignal"]
+      test: ["CMD-SHELL", "pg_isready -U mailmantis"]
       interval: 5s
       retries: 10
 
@@ -24,7 +24,7 @@ services:
       db:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgresql://mailsignal:${POSTGRES_PASSWORD:-mailsignal}@db:5432/mailsignal
+      DATABASE_URL: postgresql://mailmantis:${POSTGRES_PASSWORD:-mailmantis}@db:5432/mailmantis
       APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-}
       ADMIN_SETUP_KEY: ${ADMIN_SETUP_KEY:-}
       APP_URL: ${APP_URL:-}

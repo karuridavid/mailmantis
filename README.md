@@ -1,21 +1,21 @@
-# Mail Signal
+# Mail Mantis
 
 **Know where your domain’s email lands.**
 
-Mail Signal is a small, self-hosted dashboard for warming up and monitoring a custom domain with Gmail inboxes you own. Draft ordinary emails with Gemini, send them yourself, see whether Gmail put them in Primary, Promotions or Spam, and reply from the same place.
+Mail Mantis is a small, self-hosted dashboard for warming up and monitoring a custom domain with Gmail inboxes you own. Draft ordinary emails with Gemini, send them yourself, see whether Gmail put them in Primary, Promotions or Spam, and reply from the same place.
 
 It is manual by design:
 - **Sending:** nothing is sent until you press Send.
 - **Replies:** seed inboxes never reply on their own.
 - **Placement checks:** these only read Gmail labels. Messages are never moved.
 
-![Mail Signal overview](site/assets/shots/overview-light.jpg)
+![Mail Mantis overview](site/assets/shots/overview-light.jpg)
 
 ## Quick start
 
 ```sh
-git clone https://github.com/karuridavid/mail-signal
-cd mail-signal
+git clone https://github.com/karuridavid/mailmantis
+cd mailmantis
 docker compose up -d
 docker compose logs app | grep "setup key"
 ```
@@ -30,11 +30,11 @@ Open http://localhost:8080, enter the one-time setup key, and create your admin 
 
 For a public HTTPS domain, set `DOMAIN` and `TRUST_PROXY=1` in `.env` and run `docker compose --profile https up -d`. Caddy then handles the certificate.
 
-The full guide covers Google OAuth setup, HTTPS, Vercel + Neon, and configuration. It is on the project site at [mailsignal.vercel.app/self-host](https://mailsignal.vercel.app/self-host).
+The full guide covers Google OAuth setup, HTTPS, Vercel + Neon, and configuration. It is on the project site at [mailmantis.org/self-host](https://mailmantis.org/self-host).
 
 ## How it works
 
-1. **Connect** your domain's SMTP sender and the Gmail or Workspace inboxes you own (Google sign-in).
+1. **Connect** your domain's SMTP sender and the Gmail or Workspace inboxes you own (Google sign-in). You can save several sender domains; one is active (being warmed) at a time, and the dashboard shows that domain's results.
 2. **Brief:** Gemini reads your public website and drafts a summary of the business. You correct it, or write it yourself.
 3. **Draft and send:** Gemini writes a different, ordinary email for each inbox. You edit each one, mark it ready, and send it.
 4. **Placement:** the app finds the exact `Message-ID` in the seed inbox and reads its labels. It reports Inbox (and the tab), Spam, Other folder, or Not found yet.
@@ -65,7 +65,7 @@ DEMO=1 python tests/fake_server.py      # http://localhost:18080 — demo@exampl
 
 ## Responsible use
 
-Mail Signal is for your own domains and inboxes you own. It sends one email at a time and has no lists, imports or campaigns. It can't guarantee inbox placement. SPF, DKIM, DMARC and real engagement matter far more.
+Mail Mantis is for your own domains and inboxes you own. It sends one email at a time and has no lists, imports or campaigns. It can't guarantee inbox placement. SPF, DKIM, DMARC and real engagement matter far more.
 
 ## License
 

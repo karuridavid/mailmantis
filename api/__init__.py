@@ -1,1 +1,1 @@
-"""Serverless API handlers for Mail Monitor."""
+"""Serverless API handlers for Mail Mantis."""

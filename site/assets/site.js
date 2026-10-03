@@ -1,3 +1,7 @@
+// Set this to your Buy Me a Coffee page (e.g. "https://buymeacoffee.com/yourname") to show the buttons.
+const COFFEE_URL = '';
+if (COFFEE_URL) document.querySelectorAll('[data-coffee]').forEach(a => { a.href = COFFEE_URL; a.target = '_blank'; a.rel = 'noopener'; a.hidden = false; });
+
 // Sticky nav border on scroll and copy buttons for commands.
 const nav = document.querySelector('.nav');
 const onScroll = () => nav && nav.classList.toggle('scrolled', window.scrollY > 8);

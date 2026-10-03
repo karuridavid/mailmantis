@@ -33,13 +33,19 @@ def load_demo(app, placements):
     conn = app.db()
     app.schema(conn)
     with conn.cursor() as cur:
-        for table in ("activity", "qa_drafts", "seed_accounts", "sender_settings", "app_settings", "sessions", "admins"):
+        for table in ("activity", "qa_drafts", "seed_accounts", "senders", "sender_settings", "app_settings", "sessions", "admins"):
             cur.execute(f"DELETE FROM {table}")
         cur.execute("INSERT INTO admins(email,password_hash) VALUES(%s,%s)", ("demo@example.com", app.password_hash("demo-password-123")))
-        cur.execute("INSERT INTO sender_settings(id,email,domain,smtp_host,smtp_port,password_enc,smtp_username,from_name,verified_at) VALUES(1,%s,%s,%s,587,%s,%s,%s,%s)",
-                    (SENDER, "fernhillpottery.com", "smtp-relay.brevo.com", app.seal("demo"), "8a1b2c001@smtp-brevo.com", "Fernhill Pottery", now - timedelta(days=12)))
-        for name, value in {"website_summary": BRIEF, "website_sources": json.dumps(["https://fernhillpottery.com"]),
-                            "website_summary_updated": (now - timedelta(days=12)).isoformat(), "ai_provider": "gemini",
+        cur.execute("INSERT INTO senders(id,email,domain,smtp_host,smtp_port,password_enc,smtp_username,from_name,verified_at,active,brief,brief_sources,brief_updated,created_at) "
+                    "VALUES(%s,%s,%s,%s,587,%s,%s,%s,%s,TRUE,%s,%s,%s,%s)",
+                    (secrets.token_hex(16), SENDER, "fernhillpottery.com", "smtp-relay.brevo.com", app.seal("demo"), "8a1b2c001@smtp-brevo.com",
+                     "Fernhill Pottery", now - timedelta(days=12), BRIEF, json.dumps(["https://fernhillpottery.com"]), now - timedelta(days=12), now - timedelta(days=14)))
+        cur.execute("INSERT INTO senders(id,email,domain,smtp_host,smtp_port,password_enc,smtp_username,from_name,verified_at,active,created_at) "
+                    "VALUES(%s,%s,%s,%s,587,%s,%s,%s,%s,FALSE,%s)",
+                    (secrets.token_hex(16), "studio@fernhillclasses.com", "fernhillclasses.com", "smtp-relay.brevo.com", app.seal("demo"),
+                     "8a1b2c002@smtp-brevo.com", "Fernhill Classes", now - timedelta(days=2), now - timedelta(days=2)))
+        cur.execute("INSERT INTO app_settings(name,value) VALUES('senders_migrated','1')")
+        for name, value in {"ai_provider": "gemini",
                             "ai_model": "gemini-3.8-flash", "ai_key_enc": app.seal("demo"),
                             "google_client_id": "1234567890-demo.apps.googleusercontent.com",
                             "google_client_secret_enc": app.seal("demo")}.items():

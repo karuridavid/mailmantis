@@ -1,4 +1,4 @@
-"""Run Mail Signal locally with Gmail, SMTP and Gemini replaced by fakes.
+"""Run Mail Mantis locally with Gmail, SMTP and Gemini replaced by fakes.
 
     docker run -d --name ms-test-db -e POSTGRES_PASSWORD=dev -p 55432:5432 postgres:16-alpine
     python tests/fake_server.py            # http://localhost:18080

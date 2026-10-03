@@ -1,5 +1,5 @@
 'use strict';
-/* Mail Signal dashboard. Plain JS, no build step.
+/* Mail Mantis dashboard. Plain JS, no build step.
    State comes from the API (S); UI-only state lives in `ui`. Every view is a
    function returning HTML; clicks are handled by one delegated listener using
    data-act attributes. */
@@ -11,7 +11,7 @@ const ui = {
   page: 'overview', sel: null, filter: 'all', authMode: 'login',
   edits: {},      // unsaved draft text, keyed by draft id
   forms: {},      // unsaved form fields, keyed by form name
-  pendingRender: false, pollTimer: null, sidebarOpen: false
+  pendingRender: false, pollTimer: null, sidebarOpen: false, domain: null, pendingSources: {}
 };
 
 // ------------------------------------------------------------------ icons
@@ -49,10 +49,14 @@ const ICONS = {
   key: '<circle cx="7.5" cy="15.5" r="5.5"/><path d="m21 2-9.6 9.6M15.5 7.5l3 3L22 7l-3-3"/>',
   pause: '<rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/>',
   play: '<path d="M6 3l14 9-14 9V3z"/>',
+  bell: '<path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/>',
+  updown: '<path d="m7 15 5 5 5-5M7 9l5-5 5 5"/>',
+  chart: '<path d="M3 3v18h18"/><path d="m19 9-5 5-4-4-3 3"/>',
   google: '<path d="M21.8 12.2c0-.7-.1-1.4-.2-2H12v3.8h5.5a4.7 4.7 0 0 1-2 3.1v2.5h3.3c1.9-1.8 3-4.4 3-7.4Z"/><path d="M12 22c2.7 0 5-.9 6.7-2.4l-3.3-2.5c-.9.6-2 1-3.4 1a5.9 5.9 0 0 1-5.5-4.1H3.1v2.6A10 10 0 0 0 12 22Z"/><path d="M6.5 14a6 6 0 0 1 0-3.9V7.5H3.1a10 10 0 0 0 0 9Z"/><path d="M12 5.9c1.5 0 2.8.5 3.9 1.5l2.9-2.9A10 10 0 0 0 3.1 7.5L6.5 10A5.9 5.9 0 0 1 12 5.9Z"/>'
 };
 const icon = (name, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ''}</svg>`;
-const LOGO = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="13" width="4" height="8" rx="1.3" fill="currentColor"/><rect x="10" y="8" width="4" height="13" rx="1.3" fill="currentColor"/><rect x="17" y="3" width="4" height="18" rx="1.3" fill="#10b981"/></svg>';
+// Mantis head: a rounded inverted triangle with two eyes.
+const LOGO = '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 9.5C5 7 7.4 5.6 9.6 6.6 12 7.7 14 8.2 16 8.2s4-.5 6.4-1.6C24.6 5.6 27 7 27 9.5c0 1-.3 1.9-.8 2.7l-7.6 13.3a3 3 0 0 1-5.2 0L5.8 12.2A5 5 0 0 1 5 9.5Z" fill="#8cc461"/><circle cx="10" cy="10.6" r="2.6" fill="#0b0b0d"/><circle cx="22" cy="10.6" r="2.6" fill="#0b0b0d"/></svg>';
 
 // ------------------------------------------------------------------ helpers
 
@@ -85,6 +89,7 @@ const sentEmails = () => domainEmails().filter(d => d.status === 'sent');
 const repliesOf = id => S.drafts.filter(d => d.parent_id === id).sort((a, b) => ms(a.created_at) - ms(b.created_at));
 const waiting = d => d.kind === 'domain' && d.status === 'sent' && (!d.placement || d.placement === 'Not found');
 const editable = d => d.status === 'draft' || d.status === 'ready';
+const checkedPlacement = d => ['Inbox', 'Spam', 'Other folder'].includes(d.placement);
 
 // Status model: k is the colour key (draft ready sent inbox tab spam).
 function st(d) {
@@ -126,10 +131,18 @@ async function api(action, data = {}) {
   return out;
 }
 
+// Everything in the dashboard is scoped to the active sender domain.
+function scope(d) {
+  const email = d.sender ? d.sender.email.toLowerCase() : null;
+  const domain = d.drafts.filter(x => x.kind === 'domain' && email && x.from_email.toLowerCase() === email);
+  const ids = new Set(domain.map(x => x.id));
+  const replies = d.drafts.filter(x => x.kind === 'reply' && (ids.has(x.parent_id) || (email && x.to_email.toLowerCase() === email)));
+  return {...d, drafts: domain.concat(replies), activity: d.activity.filter(a => ids.has(a.draft_id))};
+}
+
 async function load(force = true) {
   try {
-    const d = await api('get_config');
-    S = d;
+    S = scope(await api('get_config'));
     if (ui.sel && !S.drafts.some(x => x.id === ui.sel)) ui.sel = null;
     render(force);
     return true;
@@ -179,12 +192,14 @@ async function promptBox({title, text = '', label, value = '', ok = 'Save', plac
 
 // ------------------------------------------------------------------ routing & rendering
 
-const PAGES = {overview: 'Overview', emails: 'Emails', seeds: 'Seed inboxes', sender: 'Domain sender', log: 'Placement log', settings: 'Settings'};
+const PAGES = {overview: 'Overview', emails: 'Emails', seeds: 'Seed inboxes', domains: 'Domains', log: 'Placement log', settings: 'Settings'};
 
 function route() {
-  const [, page, id] = (location.hash || '#/overview').split('/');
+  let [, page, id] = (location.hash || '#/overview').split('/');
+  if (page === 'sender') page = 'domains';
   ui.page = PAGES[page] ? page : 'overview';
   ui.sel = ui.page === 'emails' && id ? decodeURIComponent(id) : null;
+  if (ui.page === 'domains') ui.domain = id ? decodeURIComponent(id) : null;
   ui.sidebarOpen = false;
   render(true);
 }
@@ -203,7 +218,7 @@ function render(force = true) {
     if ($('.detail') && scroll.detail) $('.detail').scrollTop = scroll.detail;
     window.scrollTo(0, scroll.win);
   }
-  document.title = PAGES[ui.page] + ' · Mail Signal';
+  document.title = PAGES[ui.page] + ' · Mail Mantis';
 }
 root.addEventListener('focusout', () => setTimeout(() => {
   if (ui.pendingRender && !(document.activeElement && root.contains(document.activeElement) && document.activeElement.matches('input, textarea, select'))) render(true);
@@ -217,24 +232,23 @@ function shell() {
   const theme = document.documentElement.dataset.theme || 'system';
   return `<div class="shell">
     <aside class="sidebar ${ui.sidebarOpen ? 'open' : ''}">
-      <div class="brand"><span class="logo">${LOGO}</span>Mail Signal</div>
+      <button class="workspace" data-act="switch-domain" title="Switch the active domain">
+        <span class="ws-logo">${LOGO}</span>
+        <span class="ws-text"><b>${sender ? esc(sender.domain) : 'Mail Mantis'}</b><small>${sender ? (S.senders.length > 1 ? plural(S.senders.length, 'domain') : 'Mail Mantis') : 'No domain yet'}</small></span>
+        ${icon('updown')}</button>
       ${navItem('overview', 'overview', 'Overview')}
       ${navItem('emails', 'mail', 'Emails', ready || '')}
       ${navItem('seeds', 'users', 'Seed inboxes')}
-      ${navItem('sender', 'at', 'Domain sender')}
-      <div class="nav-label">More</div>
+      ${navItem('domains', 'globe', 'Domains')}
       ${navItem('log', 'activity', 'Placement log')}
+      <div class="sidebar-spacer"></div>
       ${navItem('settings', 'settings', 'Settings')}
-      <div class="sidebar-foot">
-        <div class="sender-card">${sender
-          ? `<b title="${esc(sender.email)}">${esc(sender.email)}</b><div class="row"><span class="dot s-${sender.verified_at ? 'inbox' : 'tab'}"></span>${sender.verified_at ? 'Connected' : 'Not tested'}</div>`
-          : `<b>No sender yet</b><div class="row"><span class="dot s-draft"></span><a href="#/sender">Connect a domain</a></div>`}</div>
-        <div class="user-row"><span title="${esc(S.user.email)}">${esc(S.user.email)}</span>
-          <button class="btn ghost sm icon" data-act="theme" title="Theme: ${theme}" aria-label="Switch theme">${icon(theme === 'dark' ? 'moon' : theme === 'light' ? 'sun' : 'monitor')}</button>
-          <button class="btn ghost sm icon" data-act="logout" title="Sign out" aria-label="Sign out">${icon('logout')}</button></div>
-      </div>
+      <button class="nav-item" data-act="theme" title="Theme: ${theme}">${icon(theme === 'dark' ? 'moon' : theme === 'light' ? 'sun' : 'monitor')}Theme<span class="badge plain">${theme}</span></button>
+      <div class="account"><span class="avatar sm" style="--h:${hue(S.user.email)}">${esc(S.user.email.charAt(0).toUpperCase())}</span>
+        <span class="acc-text"><b>${esc(S.user.email.split('@')[0])}</b><small>${esc(S.user.email)}</small></span>
+        <button class="btn ghost sm icon" data-act="logout" title="Sign out" aria-label="Sign out">${icon('logout')}</button></div>
     </aside>
-    <main class="main">${({overview, emails, seeds, sender: senderPage, log, settings})[ui.page]()}</main>
+    <main class="main"><div class="frame">${({overview, emails, seeds, domains, log, settings})[ui.page]()}</div></main>
   </div>`;
 }
 
@@ -251,125 +265,125 @@ const empty = (ico, title, text, action = '') => `<div class="empty">${icon(ico)
 // ------------------------------------------------------------------ overview
 
 function overview() {
-  const weekAgo = Date.now() - 7 * 86400000;
-  const recent = sentEmails().filter(d => ms(d.sent_at) >= weekAgo);
-  const checked = recent.filter(d => ['Inbox', 'Spam', 'Other folder'].includes(d.placement));
-  const count = k => checked.filter(d => st(d).k === k).length;
-  const inboxAll = checked.filter(d => d.placement === 'Inbox').length;
-  const rate = checked.length ? Math.round(inboxAll / checked.length * 100) : null;
-  const spam = count('spam');
-  const replies = S.drafts.filter(d => d.kind === 'reply' && d.status === 'sent' && ms(d.sent_at) >= weekAgo).length;
+  const DAY = 86400000, now = Date.now();
+  const inWindow = (d, from, to) => ms(d.sent_at) >= now - from * DAY && ms(d.sent_at) < now - to * DAY;
+  const week = sentEmails().filter(d => inWindow(d, 7, 0)), prev = sentEmails().filter(d => inWindow(d, 14, 7));
+  const rateOf = list => { const c = list.filter(checkedPlacement); return c.length ? c.filter(d => d.placement === 'Inbox').length / c.length * 100 : null; };
+  const spamOf = list => list.filter(d => d.placement === 'Spam').length;
+  const repliesIn = (from, to) => S.drafts.filter(d => d.kind === 'reply' && d.status === 'sent' && ms(d.sent_at) >= now - from * DAY && ms(d.sent_at) < now - to * DAY).length;
+  const delta = (cur, old, {pct = false, lowerIsBetter = false, neutral = false} = {}) => {
+    if (cur === null || old === null || (!pct && !old && !cur)) return '<span class="faint">No earlier data</span>';
+    const diff = pct ? Math.round(cur - old) : cur - old;
+    const good = lowerIsBetter ? diff <= 0 : diff >= 0;
+    const text = (diff > 0 ? '+' : '') + diff + (pct ? ' pts' : '');
+    return `<span class="${diff === 0 || neutral ? 'same' : good ? 'up' : 'down'}">${text}</span> vs previous 7 days`;
+  };
+  const rate = rateOf(week);
+  const kpi = (title, ico, value, sub) => `<div class="card kpi"><div class="kpi-top"><span>${title}</span>${icon(ico)}</div><div class="kpi-value">${value}</div><div class="kpi-sub">${sub}</div></div>`;
 
   const steps = [
-    ['Domain sender', 'Connect and test SMTP', !!(S.sender && S.sender.verified_at), '#/sender'],
-    ['Business brief', 'Describe the business', !!S.website_summary, '#/sender'],
+    ['Sender domain', 'Connect and test SMTP', !!(S.sender && S.sender.verified_at), '#/domains'],
+    ['Business brief', 'Describe the business', !!S.website_summary, '#/domains'],
     ['Gemini key', 'For writing drafts', S.ai_provider === 'gemini' && S.has_ai_key, '#/settings'],
     ['Google sign-in', 'OAuth client for Gmail', !!S.google.ready, '#/settings'],
-    ['Seed inbox', 'Connect a Gmail inbox', S.seeds.some(s => s.enabled), '#/seeds'],
+    ['Seed inbox', 'Connect a Gmail inbox', S.seeds.some(x => x.enabled), '#/seeds'],
     ['First email', 'Draft and send one', sentEmails().length > 0, '#/emails']
   ];
-  const done = steps.filter(s => s[2]).length;
+  const done = steps.filter(x => x[2]).length;
   const setup = done === steps.length ? '' : `<div class="card"><div class="card-head"><h2>Get set up</h2><span class="sub">${done} of ${steps.length} done</span></div>
-    <div class="setup">${steps.map(([t, s, ok, href], i) => `<a class="step ${ok ? 'done' : ''}" href="${href}"><span class="n">${ok ? icon('check') : i + 1}</span><b>${t}</b><span>${s}</span></a>`).join('')}</div></div>`;
-
-  let sentence = 'Nothing sent this week yet.';
-  if (checked.length) sentence = `${inboxAll} of ${checked.length} checked emails reached the inbox this week` + (spam ? `, ${spam} landed in Spam.` : '.');
-  else if (recent.length) sentence = `${plural(recent.length, 'email')} sent this week, waiting for placement results.`;
-
-  const stats = `<div class="card stats">
-    <div class="stat"><div class="stat-label">${icon('inbox')}Inbox rate</div><div class="stat-value">${rate === null ? '—' : rate + '<small>%</small>'}</div>
-      <div class="meter">${checked.length ? ['inbox', 'tab', 'spam'].map(k => count(k) ? `<span class="s-${k}" style="flex:${count(k)}"></span>` : '').join('') : ''}</div>
-      <div class="stat-sub">${checked.length ? `${count('inbox')} Primary · ${count('tab')} other tabs` : 'No results yet'}</div></div>
-    <div class="stat"><div class="stat-label">${icon('send')}Sent</div><div class="stat-value">${recent.length}</div><div class="stat-sub">Last 7 days${recent.filter(waiting).length ? ` · ${recent.filter(waiting).length} waiting` : ''}</div></div>
-    <div class="stat"><div class="stat-label">${icon('alert')}In Spam</div><div class="stat-value" style="${spam ? 'color:var(--spam)' : ''}">${spam}</div><div class="stat-sub">Last 7 days</div></div>
-    <div class="stat"><div class="stat-label">${icon('reply')}Replies</div><div class="stat-value">${replies}</div><div class="stat-sub">From seed inboxes</div></div>
-  </div>`;
+    <div class="setup">${steps.map(([t, sub, ok, href], i) => `<a class="step ${ok ? 'done' : ''}" href="${href}"><span class="n">${ok ? icon('check') : i + 1}</span><b>${t}</b><span>${sub}</span></a>`).join('')}</div></div>`;
 
   return header('Overview', S.sender ? esc(S.sender.domain) : '',
-      btn('refresh', 'Refresh', {ico: 'refresh', cls: 'hide-sm'}) + btn('compose', 'New emails', {ico: 'sparkles', cls: 'primary'})) +
-    `<div class="page"><div class="hello"><div><h2>${esc(S.sender ? S.sender.domain : 'Welcome to Mail Signal')}</h2><p>${esc(sentence)}</p></div></div>
-    <div class="stack">${setup}${stats}
-      <div class="grid-2">
-        <div class="card"><div class="card-head"><h2>Inbox signal</h2><span class="sub hide-sm">Latest sends per seed inbox</span><div class="right"><a class="btn ghost sm" href="#/seeds">Manage</a></div></div>
-          <div class="card-body" style="padding:8px 0">${matrix()}</div>
-          <div class="card-foot">${legend()}</div></div>
-        <div class="card"><div class="card-head"><h2>Needs attention</h2></div>${attention()}</div>
+      btn('refresh', 'Refresh placement', {ico: 'refresh', cls: 'hide-sm'}) + btn('compose', 'Write emails', {ico: 'plus', cls: 'primary'})) +
+    `<div class="page"><div class="stack">${setup}
+      <div class="kpis">
+        ${kpi('Inbox rate', 'inbox', rate === null ? '–' : Math.round(rate) + '%', delta(rate, rateOf(prev), {pct: true}))}
+        ${kpi('Emails sent', 'send', week.length, delta(week.length, prev.length, {neutral: true}))}
+        ${kpi('Landed in spam', 'alert', spamOf(week), delta(spamOf(week), spamOf(prev), {lowerIsBetter: true}))}
+        ${kpi('Replies sent', 'reply', repliesIn(7, 0), delta(repliesIn(7, 0), repliesIn(14, 7)))}
       </div>
       <div class="grid-2">
-        <div class="card"><div class="card-head"><h2>Daily placement</h2><span class="sub">Last 14 days</span></div>${dailyBars()}</div>
-        <div class="card"><div class="card-head"><h2>Activity</h2></div>${feed()}</div>
+        <div class="card chart-card"><div class="card-head col"><div><h2>Placement performance</h2><p class="sub">Where each day’s emails landed, last 14 days.</p></div><div class="right">${legend()}</div></div>${placementChart()}</div>
+        <div class="card actions-card"><div class="card-head col"><div><h2>Required actions</h2><p class="sub">Things to send, review or fix.</p></div></div>${requiredActions()}</div>
+      </div>
+      <div class="grid-2 rev">
+        <div class="card"><div class="card-head col"><div><h2>Email status</h2><p class="sub">Every email for ${S.sender ? esc(S.sender.domain) : 'this domain'}, by where it stands now.</p></div></div>${statusDonut()}</div>
+        <div class="card"><div class="card-head col"><div><h2>Placement by inbox</h2><p class="sub">How each seed inbox has filed your mail over the last 30 days.</p></div></div>${inboxBars()}</div>
       </div>
     </div></div>`;
 }
 
-function legend() {
-  return `<div class="legend">${[['inbox', 'Primary'], ['tab', 'Other tab / folder'], ['spam', 'Spam'], ['sent', 'Waiting']].map(([k, l]) => `<span><i class="dot s-${k}"></i>${l}</span>`).join('')}</div>`;
+const PLACE_KEYS = [['inbox', 'Primary'], ['tab', 'Other tab'], ['spam', 'Spam'], ['sent', 'Waiting']];
+function legend(keys = PLACE_KEYS) {
+  return `<div class="legend">${keys.map(([k, l]) => `<span><i class="dot s-${k}"></i>${l}</span>`).join('')}</div>`;
 }
 
-function matrix() {
-  if (!S.seeds.length) return empty('users', 'No seed inboxes yet', 'Connect Gmail inboxes you own to see where each email lands.', '<a class="btn sm" href="#/seeds">Connect an inbox</a>');
-  return `<div class="matrix">${S.seeds.map(seed => {
-    const sent = sentEmails().filter(d => d.seed_email === seed.email).sort((a, b) => ms(a.sent_at) - ms(b.sent_at)).slice(-14);
-    const checked = sent.filter(d => ['Inbox', 'Spam', 'Other folder'].includes(d.placement));
-    const rate = checked.length ? Math.round(checked.filter(d => d.placement === 'Inbox').length / checked.length * 100) + '%' : '—';
-    const cells = sent.length ? sent.map(d => { const s = st(d);
-      return `<a class="cell s-${s.k} ${s.k === 'sent' ? 'wait' : ''}" href="#/emails/${esc(d.id)}" title="${esc(d.subject + ' · ' + s.label + ' · ' + fullDate(d.sent_at))}"></a>`; }).join('')
-      : '<span class="faint small">Nothing sent yet</span>';
-    return `<div class="matrix-row ${seed.enabled ? '' : 'paused'}"><div class="matrix-who">${avatar(seed.email, 'sm')}<div><b>${esc(seed.name || seed.email.split('@')[0])}</b><span>${esc(seed.email)}</span></div></div>
-      <div class="cells">${cells}</div><div class="matrix-rate" title="Inbox rate">${rate}</div></div>`;
-  }).join('')}</div>`;
+function placementChart() {
+  const days = [];
+  for (let i = 13; i >= 0; i--) { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i); days.push(d); }
+  const per = days.map(day => {
+    const list = sentEmails().filter(d => new Date(d.sent_at).toDateString() === day.toDateString());
+    return PLACE_KEYS.map(([k, l]) => [k, l, list.filter(d => st(d).k === k).length]);
+  });
+  const peak = Math.max(...per.map(p => p.reduce((a, x) => a + x[2], 0)));
+  const step = Math.max(1, Math.ceil(peak / 4));
+  const max = step * 4;
+  const ticks = [4, 3, 2, 1, 0].map(i => i * step);
+  if (!peak) return `<div class="chart-empty">${empty('chart', 'No sends in the last 14 days', 'Placement results appear here once you send emails from this domain.')}</div>`;
+  return `<div class="pchart"><div class="yaxis">${ticks.map(t => `<span>${t}</span>`).join('')}</div>
+    <div class="plot">${ticks.map((t, i) => `<i class="grid" style="top:${i * 25}%"></i>`).join('')}
+      <div class="cols14">${per.map((p, i) => {
+        const total = p.reduce((a, x) => a + x[2], 0);
+        const label = days[i].toLocaleDateString(undefined, {day: 'numeric', month: 'short', year: 'numeric'});
+        return `<div class="pcol" tabindex="0">${total ? `<div class="stackbar" style="height:${total / max * 100}%">${p.filter(x => x[2]).map(([k, , n]) => `<span class="s-${k}" style="flex:${n}"></span>`).join('')}</div>` : ''}
+          <div class="tip"><b>${label}</b>${total ? p.filter(x => x[2]).map(([k, l, n]) => `<div><i class="dot s-${k}"></i>${l}<span>${n}</span></div>`).join('') : '<div>No sends</div>'}</div></div>`;
+      }).join('')}</div></div>
+    <div class="xaxis">${days.map((d, i) => `<span>${i % 2 ? '' : d.toLocaleDateString(undefined, {month: 'short', day: 'numeric'})}</span>`).join('')}</div></div>`;
 }
 
-function attention() {
+function requiredActions() {
   const items = [];
   const ready = S.drafts.filter(d => d.status === 'ready');
   const drafts = S.drafts.filter(d => d.status === 'draft');
   const spam = sentEmails().filter(d => d.placement === 'Spam' && Date.now() - ms(d.sent_at) < 14 * 86400000);
   const stale = sentEmails().filter(d => waiting(d) && Date.now() - ms(d.sent_at) > 20 * 60000 && Date.now() - ms(d.sent_at) < 3 * 86400000);
   const unreplied = sentEmails().filter(d => ['Inbox', 'Other folder'].includes(d.placement) && !repliesOf(d.id).length && Date.now() - ms(d.sent_at) < 7 * 86400000);
-  const noSend = S.seeds.filter(s => s.auth_type === 'google_oauth' && !s.gmail_send_enabled);
-  const item = (k, ico, title, sub, action) => `<div class="todo-item"><span class="feed-icon s-${k}">${icon(ico)}</span><div>${title}<small>${sub}</small></div>${action}</div>`;
-  if (ready.length) items.push(item('ready', 'send', plural(ready.length, 'email') + ' ready to send', 'Review and press Send.', `<a class="btn sm" href="#/emails" data-act="filter" data-v="ready">Open</a>`));
-  spam.slice(0, 2).forEach(d => items.push(item('spam', 'alert', `“${esc(d.subject)}” landed in Spam`, 'At ' + esc(nameOf(d.seed_email)) + '. Open it, mark it Not spam, and reply.', `<a class="btn sm" href="#/emails/${esc(d.id)}">View</a>`)));
-  if (drafts.length) items.push(item('draft', 'pencil', plural(drafts.length, 'draft') + ' to review', 'Edit, then mark ready.', `<a class="btn sm" href="#/emails" data-act="filter" data-v="draft">Review</a>`));
-  if (unreplied.length) items.push(item('inbox', 'reply', plural(unreplied.length, 'delivered email') + ' without a reply', 'Replying from some seeds is a normal engagement signal.', `<a class="btn sm" href="#/emails/${esc(unreplied[0].id)}">Reply</a>`));
-  if (stale.length) items.push(item('sent', 'clock', plural(stale.length, 'email') + ' not found yet', 'Delivery can be slow. Check again.', btn('refresh', 'Check', {cls: 'sm'})));
-  if (noSend.length) items.push(item('tab', 'key', plural(noSend.length, 'inbox', 'inboxes') + ' can’t send replies', 'Allow sending once per inbox.', `<a class="btn sm" href="#/seeds">Fix</a>`));
-  return items.length ? `<div class="todo">${items.slice(0, 5).join('')}</div>` : empty('check', 'All clear', 'Nothing needs your attention. Draft a new round when you’re ready.');
+  const noSend = S.seeds.filter(x => x.auth_type === 'google_oauth' && !x.gmail_send_enabled);
+  const item = (k, href, title, sub, extra = '') => `<a class="action-item" href="${href}"${extra}><i class="dot s-${k}"></i><span><b>${title}</b><small>${sub}</small></span></a>`;
+  spam.slice(0, 2).forEach(d => items.push(item('spam', '#/emails/' + esc(d.id), 'Landed in Spam', esc(d.subject) + ' at ' + esc(nameOf(d.seed_email)))));
+  if (noSend.length) items.push(item('spam', '#/seeds', 'Reply permission missing', esc(noSend.map(x => x.email).join(', ')) + ' can’t send replies'));
+  if (ready.length) items.push(item('ready', '#/emails', plural(ready.length, 'email') + ' ready to send', 'Review each one and press Send', ' data-act="filter" data-v="ready"'));
+  if (drafts.length) items.push(item('draft', '#/emails', plural(drafts.length, 'draft') + ' to review', 'Edit, then mark ready', ' data-act="filter" data-v="draft"'));
+  if (stale.length) items.push(`<a class="action-item" href="#" data-act="refresh"><i class="dot s-tab"></i><span><b>${plural(stale.length, 'email')} not found yet</b><small>Delivery can be slow. Check again</small></span></a>`);
+  if (unreplied.length) items.push(item('inbox', '#/emails/' + esc(unreplied[0].id), 'Reply to delivered mail', plural(unreplied.length, 'delivered email') + ' without a reply'));
+  return (items.length ? `<div class="action-list">${items.slice(0, 5).join('')}</div>` : empty('check', 'All clear', 'Nothing needs your attention right now.'))
+    + `<div class="card-pad"><a class="btn full" href="#/emails">View all emails</a></div>`;
 }
 
-function dailyBars() {
-  const days = [];
-  for (let i = 13; i >= 0; i--) { const d = new Date(); d.setHours(0, 0, 0, 0); d.setDate(d.getDate() - i); days.push(d); }
-  const per = days.map(day => {
-    const list = sentEmails().filter(d => new Date(d.sent_at).toDateString() === day.toDateString());
-    return ['inbox', 'tab', 'spam', 'sent'].map(k => [k, list.filter(d => st(d).k === k).length]);
-  });
-  const max = Math.max(3, ...per.map(p => p.reduce((a, [, n]) => a + n, 0)));
-  return `<div class="bars">${per.map((p, i) => {
-    const total = p.reduce((a, [, n]) => a + n, 0);
-    const title = days[i].toLocaleDateString(undefined, {weekday: 'short', month: 'short', day: 'numeric'}) + ': ' + (total ? p.filter(([, n]) => n).map(([k, n]) => n + ' ' + ({inbox: 'Primary', tab: 'other tab', spam: 'Spam', sent: 'waiting'})[k]).join(', ') : 'none');
-    return `<div class="bar ${total ? '' : 'zero'}" title="${esc(title)}">${p.filter(([, n]) => n).map(([k, n]) => `<span class="s-${k}" style="height:${n / max * 100}%"></span>`).join('')}</div>`;
-  }).join('')}</div><div class="bar-axis">${days.map((d, i) => `<span>${i % 2 ? '' : d.getDate()}</span>`).join('')}</div>`;
+function statusDonut() {
+  const all = domainEmails();
+  const parts = [['draft', 'Draft', all.filter(d => d.status === 'draft').length], ['ready', 'Ready', all.filter(d => d.status === 'ready').length],
+    ['sent', 'Waiting', all.filter(waiting).length], ['inbox', 'Primary', all.filter(d => d.status === 'sent' && st(d).k === 'inbox').length],
+    ['tab', 'Other tab', all.filter(d => d.status === 'sent' && st(d).k === 'tab').length], ['spam', 'Spam', all.filter(d => d.status === 'sent' && st(d).k === 'spam').length]];
+  const total = parts.reduce((a, x) => a + x[2], 0);
+  if (!total) return empty('mail', 'No emails yet', 'Write your first emails to see them here.');
+  let at = 0;
+  const stops = parts.filter(x => x[2]).map(([k, , n]) => { const from = at; at += n / total * 100; return `var(--${k}) ${from}% ${at}%`; }).join(', ');
+  return `<div class="donut-wrap"><div class="donut" style="background:conic-gradient(${stops})"><div><b>${total}</b><span>emails</span></div></div>
+    <div class="donut-legend">${parts.map(([k, l, n]) => `<div><i class="dot s-${k}"></i><span>${l}</span><b>${n}</b></div>`).join('')}</div></div>`;
 }
 
-function feed() {
-  const ev = [];
-  S.drafts.forEach(d => {
-    if (d.status !== 'sent') return;
-    if (d.kind === 'reply') ev.push([d.sent_at, 'sent', 'reply', `<b>${esc(nameOf(d.from_email))}</b> replied`, d.subject, d.parent_id]);
-    else {
-      ev.push([d.sent_at, 'sent', 'send', `Sent to <b>${esc(nameOf(d.to_email))}</b>`, d.subject, d.id]);
-      if (d.checked_at && d.placement && d.placement !== 'Not found') {
-        const s = st(d);
-        ev.push([d.checked_at, s.k, s.k === 'spam' ? 'alert' : 'inbox', `Landed in <b>${esc(s.label)}</b> for ${esc(nameOf(d.to_email))}`, d.subject, d.id]);
-      }
-    }
-  });
-  ev.sort((a, b) => ms(b[0]) - ms(a[0]));
-  if (!ev.length) return empty('activity', 'No activity yet', 'Sends, placement results and replies will appear here.');
-  return `<div class="feed">${ev.slice(0, 7).map(([t, k, ico, text, subject, id]) =>
-    `<a class="feed-item" href="#/emails/${esc(id)}"><span class="feed-icon s-${k}">${icon(ico)}</span><span class="feed-text">${text}<span class="subject">${esc(subject)}</span></span><span class="feed-time" title="${esc(fullDate(t))}">${ago(t)}</span></a>`).join('')}</div>`;
+function inboxBars() {
+  if (!S.seeds.length) return empty('users', 'No seed inboxes yet', 'Connect Gmail inboxes you own to see how each one files your mail.', '<a class="btn sm" href="#/seeds">Connect an inbox</a>');
+  const since = Date.now() - 30 * 86400000;
+  return `<div class="hbars">${S.seeds.map(seed => {
+    const list = sentEmails().filter(d => d.seed_email === seed.email && ms(d.sent_at) >= since);
+    const counts = PLACE_KEYS.map(([k, l]) => [k, l, list.filter(d => st(d).k === k).length]);
+    const total = list.length;
+    const bar = total ? counts.filter(x => x[2]).map(([k, l, n]) => { const pct = Math.round(n / total * 100);
+      return `<span class="s-${k}" style="flex:${n}" title="${l}: ${n} of ${total}">${pct >= 12 ? pct + '%' : ''}</span>`; }).join('') : '<span class="none">No sends yet</span>';
+    return `<div class="hbar-row ${seed.enabled ? '' : 'paused'}"><span class="hbar-name" title="${esc(seed.email)}">${esc(seed.name || seed.email.split('@')[0])}</span><div class="hbar">${bar}</div><span class="hbar-n">${total}</span></div>`;
+  }).join('')}</div><div class="card-pad center">${legend()}</div>`;
 }
 
 // ------------------------------------------------------------------ emails
@@ -399,9 +413,9 @@ function emails() {
     `<button class="${ui.filter === k ? 'on' : ''}" data-act="filter" data-v="${k}" role="tab">${label}<span class="count">${top.filter(fn).length}</span></button>`).join('')}</div>`;
   const rows = list.length ? list.map(row).join('')
     : empty('inbox', S.drafts.length ? 'Nothing here' : 'No emails yet', S.drafts.length ? 'No emails match this filter.' : 'Gemini writes one ordinary email per seed inbox from your business brief.',
-        S.drafts.length ? '' : btn('compose', 'New emails', {ico: 'sparkles', cls: 'primary sm'}));
+        S.drafts.length ? '' : btn('compose', 'Write emails', {ico: 'plus', cls: 'primary sm'}));
   return header('Emails', sentEmails().length + ' sent',
-      btn('refresh', 'Refresh placement', {ico: 'refresh', cls: 'hide-sm'}) + btn('compose', 'New emails', {ico: 'sparkles', cls: 'primary'})) +
+      btn('refresh', 'Refresh placement', {ico: 'refresh', cls: 'hide-sm'}) + btn('compose', 'Write emails', {ico: 'plus', cls: 'primary'})) +
     `<div class="page flush"><div class="mail-toolbar">${seg}</div>
       <div class="split ${d ? 'has-detail' : ''}"><div class="mail-list" role="list">${rows}</div>
       <section class="detail">${d ? detail(d) : `<div class="detail-inner">${empty('mail', 'Select an email', 'Pick an email from the list to edit, send, check placement or reply. <br><kbd>J</kbd> <kbd>K</kbd> to move, <kbd>N</kbd> for new emails.')}</div>`}</section></div></div>`;
@@ -544,36 +558,46 @@ function seeds() {
 
 // ------------------------------------------------------------------ sender
 
-function senderPage() {
-  const s = S.sender || {};
-  const v = (name, fallback) => esc(formVal('sender', name, fallback ?? ''));
-  const status = S.sender ? (S.sender.verified_at ? `<span class="pill s-inbox">Tested ${ago(S.sender.verified_at, true)}</span>` : '<span class="pill s-tab">Not tested</span>') : '<span class="pill s-draft">Not connected</span>';
-  const brief = formVal('brief', 'summary', S.website_summary || '');
-  const sources = ui.pendingSources || S.website_sources || [];
-  const aiBlock = !S.sender ? 'Save the sender first' : (S.ai_provider !== 'gemini' || !S.has_ai_key) ? 'Add a Gemini key in Settings' : '';
-  return header('Domain sender', S.sender ? esc(S.sender.domain) : '') + `<div class="page narrow"><div class="stack">
-    <div class="card"><div class="card-head"><h2>Connection</h2><span class="sub hide-sm">SMTP account that sends to your seed inboxes</span><div class="right">${status}</div></div>
-      <div class="card-body">
-        <div class="field-row"><div class="field"><label class="label" for="f-from-name">From name</label><input class="input" id="f-from-name" data-form="sender" name="from_name" value="${v('from_name', s.from_name)}" placeholder="Fernhill Pottery" maxlength="100"></div>
-          <div class="field"><label class="label" for="f-email">Sender address</label><input class="input" id="f-email" type="email" data-form="sender" name="email" value="${v('email', s.email)}" placeholder="hello@example.com"></div></div>
-        <div class="field-row" style="margin-top:14px"><div class="field"><label class="label" for="f-domain">Domain</label><input class="input" id="f-domain" data-form="sender" name="domain" value="${v('domain', s.domain)}" placeholder="example.com"></div>
-          <div class="field"><label class="label" for="f-host">SMTP server</label><input class="input" id="f-host" data-form="sender" name="smtp_host" value="${v('smtp_host', s.smtp_host)}" placeholder="smtp-relay.brevo.com"></div></div>
-        <div class="field-row" style="margin-top:14px"><div class="field"><label class="label" for="f-port">Port</label><select class="input" id="f-port" data-form="sender" name="smtp_port">${[587, 465].map(p => `<option value="${p}" ${String(formVal('sender', 'smtp_port', s.smtp_port || 587)) === String(p) ? 'selected' : ''}>${p} · ${p === 587 ? 'STARTTLS' : 'SSL'}</option>`).join('')}</select></div>
-          <div class="field"><label class="label" for="f-user">SMTP login</label><input class="input" id="f-user" data-form="sender" name="smtp_username" value="${v('smtp_username', s.smtp_username)}" placeholder="Same as sender address"></div></div>
-        <div class="field" style="margin-top:14px"><label class="label" for="f-pass">SMTP password or key</label><input class="input" id="f-pass" type="password" autocomplete="new-password" data-form="sender" name="password" value="${v('password')}" placeholder="${S.sender ? 'Saved. Leave blank to keep it' : ''}">
-          <span class="hint">Brevo: <span class="mono">smtp-relay.brevo.com</span>, port 587, your SMTP login and SMTP key. Cloudflare Email Routing can’t send.</span></div>
-      </div>
-      <div class="card-foot"><span class="hint" id="sender-msg"></span><div class="right">${btn('test-sender', 'Test connection')}${btn('save-sender', 'Save sender', {cls: 'primary'})}</div></div></div>
-
-    <div class="card"><div class="card-head"><h2>Business brief</h2><div class="right">${btn('read-site', 'Read website', {ico: 'sparkles', cls: 'sm', disabled: !!aiBlock, title: aiBlock})}</div></div>
-      <div class="card-body"><p class="muted" style="margin:0 0 12px;font-size:13px">Gemini only uses facts from this brief when it writes. Read your website, correct anything wrong, then save, or write it yourself.</p>
-        <textarea class="input" data-form="brief" name="summary" rows="8" maxlength="6000" placeholder="What the business does, who it serves, its main products or services, and its tone.">${esc(brief)}</textarea>
-        <div class="labels" style="margin-top:10px">${sources.map(u => `<span class="chip">${icon('globe')}&nbsp;${esc(u.replace(/^https?:\/\//, ''))}</span>`).join('')}${S.website_summary_updated ? `<span class="faint small" style="align-self:center">Saved ${ago(S.website_summary_updated, true)}</span>` : ''}</div></div>
-      <div class="card-foot"><span class="hint mono">${brief.length} / 6000</span><div class="right">${btn('save-brief', 'Save brief', {cls: 'primary'})}</div></div></div>
-  </div></div>`;
+function domains() {
+  const list = S.senders;
+  const id = ui.domain === 'new' || !list.length ? 'new' : (list.some(x => x.id === ui.domain) ? ui.domain : (S.sender || list[0]).id);
+  const sel = id === 'new' ? null : list.find(x => x.id === id);
+  const items = list.map(x => `<a class="domain-item ${x.id === id ? 'on' : ''}" href="#/domains/${esc(x.id)}"><span class="avatar sm" style="--h:${hue(x.domain)}">${esc(x.domain.charAt(0).toUpperCase())}</span><span><b>${esc(x.domain)}</b><small>${esc(x.email)}</small></span>${x.active ? '<span class="pill s-inbox">Active</span>' : ''}</a>`).join('')
+    + `<a class="domain-item add ${id === 'new' ? 'on' : ''}" href="#/domains/new">${icon('plus')}<span><b>Add a domain</b><small>Another sender to warm later</small></span></a>`;
+  return header('Domains', 'One domain is warmed at a time') + `<div class="page"><div class="domains">
+    <div><div class="card domain-list">${items}</div>
+      <p class="hint" style="margin:10px 4px 0">The active domain is used for drafts, sending and filters, and the dashboard shows its results. Switching keeps each domain’s history.</p></div>
+    <div class="stack">${domainEditor(sel)}</div></div></div>`;
 }
 
-// ------------------------------------------------------------------ log & settings
+function domainEditor(sd) {
+  const key = 'sender:' + (sd ? sd.id : 'new');
+  const v = (name, fallback) => esc(formVal(key, name, fallback ?? ''));
+  const status = !sd ? '' : sd.verified_at ? `<span class="pill s-inbox">Tested ${ago(sd.verified_at, true)}</span>` : '<span class="pill s-tab">Not tested</span>';
+  const connection = `<div class="card"><div class="card-head"><h2>${sd ? esc(sd.domain) : 'New sender domain'}</h2>${sd && sd.active ? '<span class="pill s-inbox">Active</span>' : ''}<div class="right">${status}</div></div>
+    <div class="card-body">
+      <div class="field-row"><div class="field"><label class="label" for="f-from-name">From name</label><input class="input" id="f-from-name" data-form="${key}" name="from_name" value="${v('from_name', sd && sd.from_name)}" placeholder="Fernhill Pottery" maxlength="100"></div>
+        <div class="field"><label class="label" for="f-email">Sender address</label><input class="input" id="f-email" type="email" data-form="${key}" name="email" value="${v('email', sd && sd.email)}" placeholder="hello@example.com"></div></div>
+      <div class="field-row" style="margin-top:14px"><div class="field"><label class="label" for="f-domain">Domain</label><input class="input" id="f-domain" data-form="${key}" name="domain" value="${v('domain', sd && sd.domain)}" placeholder="example.com"></div>
+        <div class="field"><label class="label" for="f-host">SMTP server</label><input class="input" id="f-host" data-form="${key}" name="smtp_host" value="${v('smtp_host', sd && sd.smtp_host)}" placeholder="smtp-relay.brevo.com"></div></div>
+      <div class="field-row" style="margin-top:14px"><div class="field"><label class="label" for="f-port">Port</label><select class="input" id="f-port" data-form="${key}" name="smtp_port">${[587, 465].map(port => `<option value="${port}" ${String(formVal(key, 'smtp_port', (sd && sd.smtp_port) || 587)) === String(port) ? 'selected' : ''}>${port} · ${port === 587 ? 'STARTTLS' : 'SSL'}</option>`).join('')}</select></div>
+        <div class="field"><label class="label" for="f-user">SMTP login</label><input class="input" id="f-user" data-form="${key}" name="smtp_username" value="${v('smtp_username', sd && sd.smtp_username)}" placeholder="Same as sender address"></div></div>
+      <div class="field" style="margin-top:14px"><label class="label" for="f-pass">SMTP password or key</label><input class="input" id="f-pass" type="password" autocomplete="new-password" data-form="${key}" name="password" value="${v('password')}" placeholder="${sd ? 'Saved. Leave blank to keep it' : ''}">
+        <span class="hint">Brevo: <span class="mono">smtp-relay.brevo.com</span>, port 587, your SMTP login and SMTP key. Cloudflare Email Routing can’t send.</span></div>
+    </div>
+    <div class="card-foot">${sd && !sd.active ? btn('activate', 'Make active', {cls: 'sm', id: sd.id}) : ''}${sd ? btn('remove-domain', 'Remove', {cls: 'sm ghost danger', ico: 'trash', id: sd.id}) : ''}
+      <span class="hint" id="sender-msg"></span><div class="right">${btn('test-sender', 'Test connection', {id: sd ? sd.id : ''})}${btn('save-sender', sd ? 'Save' : 'Add domain', {cls: 'primary', id: sd ? sd.id : ''})}</div></div></div>`;
+  if (!sd) return connection;
+  const bkey = 'brief:' + sd.id;
+  const brief = formVal(bkey, 'summary', sd.brief || '');
+  const sources = ui.pendingSources[sd.id] || sd.brief_sources || [];
+  const aiBlock = (S.ai_provider !== 'gemini' || !S.has_ai_key) ? 'Add a Gemini key in Settings' : '';
+  return connection + `<div class="card"><div class="card-head"><h2>Business brief</h2><div class="right">${btn('read-site', 'Read website', {ico: 'sparkles', cls: 'sm', id: sd.id, disabled: !!aiBlock, title: aiBlock})}</div></div>
+    <div class="card-body"><p class="muted" style="margin:0 0 12px;font-size:13px">Gemini only uses facts from this brief when it writes for ${esc(sd.domain)}. Read the website, correct anything wrong, then save, or write it yourself.</p>
+      <textarea class="input" data-form="${bkey}" name="summary" rows="8" maxlength="6000" placeholder="What the business does, who it serves, its main products or services, and its tone.">${esc(brief)}</textarea>
+      <div class="labels" style="margin-top:10px">${sources.map(u => `<span class="chip">${icon('globe')}&nbsp;${esc(u.replace(/^https?:\/\//, ''))}</span>`).join('')}${sd.brief_updated ? `<span class="faint small" style="align-self:center">Saved ${ago(sd.brief_updated, true)}</span>` : ''}</div></div>
+    <div class="card-foot"><span class="hint mono" data-count="${esc(sd.id)}">${brief.length} / 6000</span><div class="right">${btn('save-brief', 'Save brief', {cls: 'primary', id: sd.id})}</div></div></div>`;
+}
 
 function log() {
   const subjects = Object.fromEntries(S.drafts.map(d => [d.id, d.subject]));
@@ -625,7 +649,7 @@ function renderAuth(message = '') {
   stopPolling();
   const setup = ui.authMode === 'setup';
   root.innerHTML = `<div class="auth"><div class="auth-card"><div class="logo">${LOGO}</div>
-    <h1>${setup ? 'Create your admin login' : 'Sign in to Mail Signal'}</h1><p>${setup ? 'Use the one-time setup key from your server.' : 'Your private deliverability workspace.'}</p>
+    <h1>${setup ? 'Create your admin login' : 'Sign in to Mail Mantis'}</h1><p>${setup ? 'Use the one-time setup key from your server.' : 'Your private deliverability workspace.'}</p>
     <form id="auth-form">
       ${setup ? '<div class="field"><label class="label" for="a-key">Setup key</label><input class="input" id="a-key" type="password" required autocomplete="off"></div>' : ''}
       <div class="field"><label class="label" for="a-email">Email</label><input class="input" id="a-email" type="email" required autocomplete="username"></div>
@@ -687,11 +711,14 @@ async function saveEdits(id) {
   if (g) ui.edits[id] = {guidance: g};
 }
 
-function senderPayload() {
-  const s = S.sender || {};
-  const f = name => formVal('sender', name, name === 'smtp_port' ? (s.smtp_port || 587) : (s[name] || ''));
-  return {from_name: f('from_name'), email: f('email'), domain: f('domain'), smtp_host: f('smtp_host'), smtp_port: Number(f('smtp_port')), smtp_username: f('smtp_username'), password: f('password')};
+function senderPayload(id) {
+  const sd = S.senders.find(x => x.id === id) || {};
+  const key = 'sender:' + (id || 'new');
+  const f = name => formVal(key, name, name === 'smtp_port' ? (sd.smtp_port || 587) : (sd[name] || ''));
+  return {id: id || '', from_name: f('from_name'), email: f('email'), domain: f('domain'), smtp_host: f('smtp_host'),
+          smtp_port: Number(f('smtp_port')), smtp_username: f('smtp_username'), password: f('password')};
 }
+function senderMessage(text, ok) { const m = $('#sender-msg'); if (m) { m.textContent = text; m.style.color = ok ? 'var(--inbox)' : 'var(--spam)'; } }
 
 const ACTIONS = {
   menu() { ui.sidebarOpen = !ui.sidebarOpen; $('.sidebar').classList.toggle('open', ui.sidebarOpen); },
@@ -699,7 +726,7 @@ const ACTIONS = {
   theme() { const order = ['system', 'light', 'dark']; ACTIONS['set-theme'](null, order[(order.indexOf(document.documentElement.dataset.theme || 'system') + 1) % 3]); },
   'set-theme'(el, v = el.dataset.v) {
     if (v === 'system') delete document.documentElement.dataset.theme; else document.documentElement.dataset.theme = v;
-    try { localStorage.setItem('ms-theme', v); } catch (e) { /* storage blocked */ }
+    try { localStorage.setItem('mm-theme', v); } catch (e) { /* storage blocked */ }
     render(true);
   },
   filter(el) { ui.filter = el.dataset.v; if (ui.page === 'emails') render(true); },
@@ -797,35 +824,52 @@ const ACTIONS = {
   },
 
   async 'test-sender'(el) {
-    await withBusy(el, async () => {
-      const r = await api('test_sender', senderPayload());
-      $('#sender-msg').textContent = r.message;
-      $('#sender-msg').style.color = 'var(--inbox)';
-    }).catch(e => { $('#sender-msg').textContent = e.message; $('#sender-msg').style.color = 'var(--spam)'; });
+    await withBusy(el, async () => { const r = await api('test_sender', senderPayload(el.dataset.id)); senderMessage(r.message, true); })
+      .catch(e => senderMessage(e.message, false));
   },
   async 'save-sender'(el) {
+    const id = el.dataset.id;
     await withBusy(el, async () => {
-      const r = await api('save_sender', senderPayload());
-      delete ui.forms.sender;
+      const r = await api('save_sender', senderPayload(id));
+      delete ui.forms['sender:' + (id || 'new')];
       await load();
       toast(r.message);
-    }).catch(e => { const m = $('#sender-msg'); if (m) { m.textContent = e.message; m.style.color = 'var(--spam)'; } });
+      if (!id) go('#/domains/' + r.id);
+    }).catch(e => senderMessage(e.message, false));
+  },
+  'switch-domain'() { switchDialog(); },
+  async activate(el) {
+    const sd = S.senders.find(x => x.id === el.dataset.id);
+    if (!await confirmBox({title: 'Warm up ' + sd.domain + '?', text: `${sd.domain} becomes the active domain. New drafts and sends use ${sd.email}, and the dashboard shows its results.${S.sender ? ' ' + S.sender.domain + ' keeps its history and can be made active again later.' : ''}`, ok: 'Make active'})) return;
+    const r = await api('set_active_sender', {id: sd.id});
+    ui.sel = null;
+    await load();
+    toast(r.message);
+  },
+  async 'remove-domain'(el) {
+    const sd = S.senders.find(x => x.id === el.dataset.id);
+    if (!await confirmBox({title: 'Remove ' + sd.domain + '?', text: 'Its SMTP details and brief are deleted. Emails already sent stay in the history.', ok: 'Remove', danger: true})) return;
+    await api('delete_sender', {id: sd.id});
+    await load();
+    go('#/domains');
   },
   async 'read-site'(el) {
-    if ((formVal('brief', 'summary', S.website_summary || '')).trim() && !await confirmBox({title: 'Replace the brief?', text: 'Gemini will read your website and replace the text in the box. Nothing is saved until you choose Save brief.', ok: 'Read website'})) return;
+    const sd = S.senders.find(x => x.id === el.dataset.id);
+    if ((formVal('brief:' + sd.id, 'summary', sd.brief || '')).trim() && !await confirmBox({title: 'Replace the brief?', text: 'Gemini will read ' + sd.domain + ' and replace the text in the box. Nothing is saved until you choose Save brief.', ok: 'Read website'})) return;
     await withBusy(el, async () => {
-      const r = await api('analyze_website');
-      ui.forms.brief = {summary: r.summary};
-      ui.pendingSources = r.sources;
+      const r = await api('analyze_website', {id: sd.id});
+      ui.forms['brief:' + sd.id] = {summary: r.summary};
+      ui.pendingSources[sd.id] = r.sources;
       render(true);
       toast(r.sources.length ? 'Summary ready. Review and correct it, then save.' : 'Gemini could not confirm which pages it read. Check the summary carefully.');
     });
   },
   async 'save-brief'(el) {
+    const sd = S.senders.find(x => x.id === el.dataset.id);
     await withBusy(el, async () => {
-      const r = await api('save_website_brief', {summary: formVal('brief', 'summary', S.website_summary || ''), sources: ui.pendingSources || S.website_sources || []});
-      delete ui.forms.brief;
-      ui.pendingSources = null;
+      const r = await api('save_website_brief', {id: sd.id, summary: formVal('brief:' + sd.id, 'summary', sd.brief || ''), sources: ui.pendingSources[sd.id] || sd.brief_sources || []});
+      delete ui.forms['brief:' + sd.id];
+      delete ui.pendingSources[sd.id];
       await load();
       toast(r.message);
     });
@@ -868,7 +912,7 @@ document.addEventListener('click', async e => {
     if (ui.sidebarOpen && !e.target.closest('.sidebar')) { ui.sidebarOpen = false; $('.sidebar')?.classList.remove('open'); }
     return;
   }
-  if (el.tagName === 'BUTTON') e.preventDefault();
+  if (el.tagName === 'BUTTON' || el.getAttribute('href') === '#') e.preventDefault();
   try { await ACTIONS[el.dataset.act](el); } catch (err) { toast(err.message, 'err'); }
 });
 
@@ -876,7 +920,7 @@ root.addEventListener('input', e => {
   const el = e.target;
   if (el.dataset.form) {
     (ui.forms[el.dataset.form] ||= {})[el.name] = el.value;
-    if (el.dataset.form === 'brief') { const c = el.closest('.card').querySelector('.card-foot .mono'); if (c) c.textContent = el.value.length + ' / 6000'; }
+    if (el.dataset.form.startsWith('brief:')) { const c = root.querySelector(`[data-count="${CSS.escape(el.dataset.form.slice(6))}"]`); if (c) c.textContent = el.value.length + ' / 6000'; }
   }
   if (el.dataset.edit) {
     const id = el.dataset.id;
@@ -918,11 +962,11 @@ document.addEventListener('keydown', e => {
 async function composeDialog() {
   const enabled = S.seeds.filter(s => s.enabled);
   const blocker = geminiBlocker();
-  if (!S.sender) { toast('Connect the domain sender first', 'err'); go('#/sender'); return; }
+  if (!S.sender) { toast('Add a sender domain first', 'err'); go('#/domains/new'); return; }
   if (!enabled.length) { toast('Connect a seed inbox first', 'err'); go('#/seeds'); return; }
   const lastResult = email => { const d = sentEmails().filter(x => x.seed_email === email).sort((a, b) => ms(b.sent_at) - ms(a.sent_at))[0]; return d ? pill(d) : ''; };
   openDialog(`<form method="dialog" id="compose">
-    <div class="dlg-head"><h2>New emails</h2><p>Gemini writes a different, ordinary email for each inbox you pick, using your business brief. Nothing is sent until you review it and press Send.</p></div>
+    <div class="dlg-head"><h2>Write emails from ${esc(S.sender.domain)}</h2><p>Gemini writes a different, ordinary email for each inbox you pick, using the ${esc(S.sender.domain)} brief. Nothing is sent until you review it and press Send.</p></div>
     <div class="dlg-body">
       <div class="field"><div style="display:flex;align-items:center"><span class="label">Seed inboxes</span><button type="button" class="btn ghost sm" style="margin-left:auto" id="pick-all">Select all</button></div>
         <div class="pick">${enabled.map(s => `<label><input type="checkbox" class="checkbox" value="${esc(s.id)}" checked>${avatar(s.email, 'sm')}<div>${esc(s.name || s.email.split('@')[0])}<span>${esc(s.email)}</span></div>${lastResult(s.email)}</label>`).join('')}</div></div>
@@ -960,6 +1004,24 @@ async function composeDialog() {
     });
     update();
   });
+}
+
+async function switchDialog() {
+  if (!S.senders.length) { go('#/domains/new'); return; }
+  const result = await openDialog(`<form method="dialog">
+    <div class="dlg-head"><h2>Active domain</h2><p>Only one domain is warmed at a time. The active domain is used for new drafts and sends, and the dashboard shows its results.</p></div>
+    <div class="dlg-body"><div class="pick">${S.senders.map(x => `<label><input type="radio" class="checkbox" name="sender" value="${esc(x.id)}" ${x.active ? 'checked' : ''}><span class="avatar sm" style="--h:${hue(x.domain)}">${esc(x.domain.charAt(0).toUpperCase())}</span><div>${esc(x.domain)}<span>${esc(x.email)}</span></div>${x.active ? '<span class="pill s-inbox">Active</span>' : ''}</label>`).join('')}</div>
+      <p style="margin:12px 0 0"><a class="link" href="#/domains/new" data-close>Add another domain</a></p></div>
+    <div class="dlg-foot"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" value="ok">Make active</button></div></form>`);
+  if (result !== 'ok') return;
+  const id = $('input[name=sender]:checked', dialog)?.value;
+  if (!id || (S.sender && id === S.sender.id)) return;
+  try {
+    const r = await api('set_active_sender', {id});
+    ui.sel = null;
+    await load();
+    toast(r.message);
+  } catch (err) { toast(err.message, 'err'); }
 }
 
 // ------------------------------------------------------------------ start

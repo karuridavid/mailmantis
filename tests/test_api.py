@@ -174,6 +174,35 @@ call("generate_drafts", expect=400, seed_ids=[bob["id"]])
 call("rename_seed", id=bob["id"], name="Bob")
 check({s["id"]: s for s in call("get_config")["seeds"]}[bob["id"]]["name"] == "Bob", "rename seed")
 
+# --- multiple sender domains, one active
+cfg = call("get_config")
+first = cfg["sender"]
+check(len(cfg["senders"]) == 1 and first["active"] and "password_enc" not in first, "first sender is active")
+call("save_sender", expect=400, email="hi@example.com", domain="example.com", smtp_host="smtp.test", smtp_port=587, password="p")  # duplicate address
+second = call("save_sender", email="news@second.org", domain="second.org", smtp_host="smtp.test", smtp_port=465, password="p2", from_name="Second")["id"]
+cfg = call("get_config")
+check(len(cfg["senders"]) == 2 and cfg["sender"]["id"] == first["id"], "new domain saved as inactive")
+call("save_website_brief", id=second, summary="Second org brief.")
+cfg = call("get_config")
+check(cfg["website_summary"] == first["brief"] and {x["id"]: x for x in cfg["senders"]}[second]["brief"] == "Second org brief.", "brief stored per domain")
+leftover = call("create_draft", seed_id=jane["id"], subject="From first", body="Body")["id"]
+call("set_draft_status", id=leftover, status="ready")
+call("set_active_sender", id=second)
+cfg = call("get_config")
+check(cfg["sender"]["id"] == second and cfg["website_summary"] == "Second org brief.", "switching active domain")
+check(all(s["filter_never_spam"] is None for s in cfg["seeds"]), "filter status reset on switch")
+err = call("send_draft", expect=400, id=leftover)
+check("sender changed" in err["error"], "draft from the previous domain cannot be sent")
+ids = call("generate_drafts", seed_ids=[jane["id"]])["ids"]
+check({d["id"]: d for d in call("get_config")["drafts"]}[ids[0]]["from_email"] == "news@second.org", "drafts use the active domain")
+call("save_sender", id=second, email="news@second.org", domain="second.org", smtp_host="smtp.test", smtp_port=465, password="")  # keeps saved key
+call("save_sender", id=second, email="news@third.org", domain="third.org", smtp_host="smtp.test", smtp_port=465, password="")
+check(call("get_config")["website_summary"] == "", "changing a domain clears its brief")
+call("delete_sender", expect=400, id=second)  # active with others present
+call("set_active_sender", id=first["id"])
+call("delete_sender", id=second)
+check(len(call("get_config")["senders"]) == 1, "inactive domain deleted")
+
 # --- removed actions are gone
 call("run_check", expect=400)
 call("rotate_cron", expect=400)

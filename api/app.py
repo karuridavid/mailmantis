@@ -89,6 +89,16 @@ def schema(conn) -> None:
         "ALTER TABLE sender_settings ADD COLUMN IF NOT EXISTS from_name TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE sender_settings ADD COLUMN IF NOT EXISTS verified_at TIMESTAMPTZ",
         "CREATE TABLE IF NOT EXISTS app_settings (name TEXT PRIMARY KEY, value TEXT NOT NULL)",
+        # Several sender domains can be saved; exactly one is active (being warmed) at a time.
+        "CREATE TABLE IF NOT EXISTS senders (id TEXT PRIMARY KEY, email TEXT UNIQUE NOT NULL, domain TEXT NOT NULL, smtp_host TEXT NOT NULL, smtp_port INTEGER NOT NULL, password_enc TEXT NOT NULL, smtp_username TEXT NOT NULL DEFAULT '', from_name TEXT NOT NULL DEFAULT '', verified_at TIMESTAMPTZ, active BOOLEAN NOT NULL DEFAULT FALSE, brief TEXT NOT NULL DEFAULT '', brief_sources TEXT NOT NULL DEFAULT '[]', brief_updated TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+        "CREATE UNIQUE INDEX IF NOT EXISTS senders_one_active ON senders(active) WHERE active",
+        "INSERT INTO senders(id,email,domain,smtp_host,smtp_port,password_enc,smtp_username,from_name,verified_at,active,brief,brief_sources,brief_updated) "
+        "SELECT md5(random()::text), s.email, s.domain, s.smtp_host, s.smtp_port, s.password_enc, s.smtp_username, s.from_name, s.verified_at, TRUE, "
+        "COALESCE((SELECT value FROM app_settings WHERE name='website_summary'), ''), "
+        "COALESCE(NULLIF((SELECT value FROM app_settings WHERE name='website_sources'), ''), '[]'), "
+        "NULLIF((SELECT value FROM app_settings WHERE name='website_summary_updated'), '')::timestamptz "
+        "FROM sender_settings s WHERE NOT EXISTS (SELECT 1 FROM senders) AND NOT EXISTS (SELECT 1 FROM app_settings WHERE name='senders_migrated')",
+        "INSERT INTO app_settings(name,value) VALUES('senders_migrated','1') ON CONFLICT(name) DO NOTHING",
         "CREATE TABLE IF NOT EXISTS activity (id TEXT PRIMARY KEY, seed_email TEXT NOT NULL, result TEXT NOT NULL, duration_ms INTEGER NOT NULL, message_id TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
         "ALTER TABLE activity ADD COLUMN IF NOT EXISTS draft_id TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE activity ADD COLUMN IF NOT EXISTS tab TEXT NOT NULL DEFAULT ''",
@@ -136,12 +146,24 @@ def one(conn, sql: str, params: tuple = ()):
         return cur.fetchone()
 
 
-def load_sender(conn) -> dict | None:
-    row = one(conn, "SELECT email,domain,smtp_host,smtp_port,password_enc,smtp_username,from_name,verified_at FROM sender_settings WHERE id=1")
-    if not row:
-        return None
-    return {"email": row[0], "domain": row[1], "smtp_host": row[2], "smtp_port": row[3], "password_enc": row[4],
-            "smtp_username": row[5] or row[0], "from_name": row[6], "verified_at": row[7]}
+SENDER_COLUMNS = "id,email,domain,smtp_host,smtp_port,password_enc,smtp_username,from_name,verified_at,active,brief,brief_sources,brief_updated,created_at"
+
+
+def sender_dict(row) -> dict:
+    item = dict(zip(SENDER_COLUMNS.split(","), row))
+    item["smtp_username"] = item["smtp_username"] or item["email"]
+    return item
+
+
+def load_sender(conn, sender_id: str = "") -> dict | None:
+    """The sender with this id, or the active sender when no id is given."""
+    row = one(conn, f"SELECT {SENDER_COLUMNS} FROM senders WHERE " + ("id=%s" if sender_id else "active"),
+              (sender_id,) if sender_id else ())
+    return sender_dict(row) if row else None
+
+
+def public_sender(sender: dict) -> dict:
+    return {k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in sender.items() if k != "password_enc"}
 
 
 def load_seed(conn, *, seed_id: str = "", email: str = "") -> dict | None:
@@ -423,7 +445,8 @@ def gemini_config(conn) -> tuple[str, str]:
 
 
 def approved_brief(conn) -> str:
-    brief = get_settings(conn, "website_summary").get("website_summary", "").strip()
+    sender = load_sender(conn)
+    brief = (sender["brief"] if sender else "").strip()
     if not brief:
         raise ValueError("Save an approved business brief under Domain sender first")
     return brief
@@ -531,17 +554,19 @@ def read_config(conn, user: dict, handler=None) -> dict:
                      "draft_id": r[6], "created_at": r[7].isoformat()} for r in cur.fetchall()]
         cur.execute(f"SELECT {DRAFT_COLUMNS} FROM qa_drafts ORDER BY created_at DESC LIMIT 300")
         drafts = [draft_dict(r) for r in cur.fetchall()]
-    sender = load_sender(conn)
-    settings = get_settings(conn, "ai_provider", "ai_model", "ai_key_enc", "website_summary", "website_sources", "website_summary_updated")
+        cur.execute(f"SELECT {SENDER_COLUMNS} FROM senders ORDER BY created_at")
+        senders = [public_sender(sender_dict(r)) for r in cur.fetchall()]
+    for item in senders:
+        item["brief_sources"] = json.loads(item["brief_sources"] or "[]")
+    sender = next((x for x in senders if x["active"]), None)
+    settings = get_settings(conn, "ai_provider", "ai_model", "ai_key_enc")
     return {"user": user,
             "seeds": seeds,
-            "sender": {k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in sender.items() if k != "password_enc"} if sender else None,
+            "senders": senders, "sender": sender,
             "activity": activity, "drafts": drafts,
             "ai_provider": settings.get("ai_provider", "none"), "ai_model": settings.get("ai_model", ""),
             "has_ai_key": bool(settings.get("ai_key_enc")), "default_model": DEFAULT_MODEL,
-            "website_summary": settings.get("website_summary", ""),
-            "website_sources": json.loads(settings.get("website_sources", "[]") or "[]"),
-            "website_summary_updated": settings.get("website_summary_updated", ""),
+            "website_summary": sender["brief"] if sender else "",
             "storage_ready": True, "google": google_public}
 
 
@@ -590,39 +615,73 @@ def act_save_google(conn, body, user, req=None):
 
 
 def act_save_sender(conn, body, user, req=None):
+    """Create a sender domain (no id) or update one. The connection is tested before saving."""
     form = sender_form(body)
-    old = load_sender(conn)
+    sender_id = text(body, "id", 64)
+    old = load_sender(conn, sender_id) if sender_id else None
+    if sender_id and not old:
+        raise ValueError("That sender domain was removed")
+    clash = one(conn, "SELECT id FROM senders WHERE email=%s", (form["email"],))
+    if clash and clash[0] != sender_id:
+        raise ValueError("That sender address is already saved")
     encrypted = seal(form["password"]) if form["password"] else (old["password_enc"] if old else "")
     if not encrypted:
         raise ValueError("Enter the SMTP password or key")
     verify_smtp(form["email"], unseal(encrypted), form["smtp_host"], form["smtp_port"], form["smtp_username"])
+    values = (form["email"], form["domain"], form["smtp_host"], form["smtp_port"], encrypted, form["smtp_username"], form["from_name"])
     with conn.cursor() as cur:
-        cur.execute("INSERT INTO sender_settings(id,email,domain,smtp_host,smtp_port,password_enc,smtp_username,from_name,verified_at) "
-                    "VALUES(1,%s,%s,%s,%s,%s,%s,%s,NOW()) ON CONFLICT(id) DO UPDATE SET email=EXCLUDED.email,domain=EXCLUDED.domain,"
-                    "smtp_host=EXCLUDED.smtp_host,smtp_port=EXCLUDED.smtp_port,password_enc=EXCLUDED.password_enc,"
-                    "smtp_username=EXCLUDED.smtp_username,from_name=EXCLUDED.from_name,verified_at=NOW()",
-                    (form["email"], form["domain"], form["smtp_host"], form["smtp_port"], encrypted, form["smtp_username"], form["from_name"]))
-    if old and old["domain"] != form["domain"]:
-        # A brief for another domain must not be reused by accident.
-        set_setting(conn, "website_summary", "")
-        set_setting(conn, "website_sources", "[]")
-        set_setting(conn, "website_summary_updated", "")
-    if old and old["email"] != form["email"]:
+        if old:
+            cur.execute("UPDATE senders SET email=%s,domain=%s,smtp_host=%s,smtp_port=%s,password_enc=%s,smtp_username=%s,from_name=%s,verified_at=NOW() WHERE id=%s",
+                        values + (sender_id,))
+            if old["domain"] != form["domain"]:
+                # A brief for another domain must not be reused by accident.
+                cur.execute("UPDATE senders SET brief='',brief_sources='[]',brief_updated=NULL WHERE id=%s", (sender_id,))
+        else:
+            sender_id = secrets.token_hex(16)
+            first = one(conn, "SELECT COUNT(*) FROM senders")[0] == 0
+            cur.execute("INSERT INTO senders(id,email,domain,smtp_host,smtp_port,password_enc,smtp_username,from_name,verified_at,active) "
+                        "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,NOW(),%s)", (sender_id,) + values + (first,))
+    if old and old["active"] and old["email"] != form["email"]:
         set_seed_filter_status(conn, None)
     conn.commit()
-    return {"ok": True, "message": "Connection works. Sender saved."}
+    return {"ok": True, "id": sender_id, "message": "Connection works. Sender saved."}
 
 
 def act_test_sender(conn, body, user, req=None):
     form = sender_form(body)
     password = form["password"]
     if not password:
-        old = load_sender(conn)
+        old = load_sender(conn, text(body, "id", 64)) if text(body, "id", 64) else None
         if not old:
             raise ValueError("Enter the SMTP password or key to test these settings")
         password = unseal(old["password_enc"])
     verify_smtp(form["email"], password, form["smtp_host"], form["smtp_port"], form["smtp_username"])
-    return {"ok": True, "message": "Connection works. Choose Save sender to keep these details."}
+    return {"ok": True, "message": "Connection works. Choose Save to keep these details."}
+
+
+def act_set_active_sender(conn, body, user, req=None):
+    sender = load_sender(conn, text(body, "id", 64))
+    if not sender:
+        raise ValueError("That sender domain was removed")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE senders SET active=FALSE WHERE active AND id<>%s", (sender["id"],))
+        cur.execute("UPDATE senders SET active=TRUE WHERE id=%s", (sender["id"],))
+    # Filters in seed inboxes were checked for the previous sender address.
+    set_seed_filter_status(conn, None)
+    conn.commit()
+    return {"ok": True, "message": f"{sender['domain']} is now the active domain"}
+
+
+def act_delete_sender(conn, body, user, req=None):
+    sender = load_sender(conn, text(body, "id", 64))
+    if not sender:
+        raise ValueError("That sender domain was already removed")
+    if sender["active"] and one(conn, "SELECT COUNT(*) FROM senders")[0] > 1:
+        raise ValueError("Make another domain active before removing this one")
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM senders WHERE id=%s", (sender["id"],))
+    conn.commit()
+    return {"ok": True}
 
 
 def act_save_ai(conn, body, user, req=None):
@@ -642,7 +701,7 @@ def act_save_ai(conn, body, user, req=None):
 
 
 def act_analyze_website(conn, body, user, req=None):
-    sender = load_sender(conn)
+    sender = load_sender(conn, text(body, "id", 64))
     if not sender:
         raise ValueError("Connect the domain sender first")
     api_key, model = gemini_config(conn)
@@ -656,11 +715,12 @@ def act_save_website_brief(conn, body, user, req=None):
     summary = text(body, "summary", 6000)
     sources = body.get("sources", [])
     sources = [str(x)[:500] for x in sources[:10]] if isinstance(sources, list) else []
-    if not load_sender(conn):
+    sender = load_sender(conn, text(body, "id", 64))
+    if not sender:
         raise ValueError("Connect the domain sender first")
-    set_setting(conn, "website_summary", summary)
-    set_setting(conn, "website_sources", json.dumps(sources))
-    set_setting(conn, "website_summary_updated", datetime.now(timezone.utc).isoformat() if summary else "")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE senders SET brief=%s,brief_sources=%s,brief_updated=%s WHERE id=%s",
+                    (summary, json.dumps(sources), datetime.now(timezone.utc) if summary else None, sender["id"]))
     conn.commit()
     return {"ok": True, "message": "Business brief saved" if summary else "Business brief cleared"}
 
@@ -668,7 +728,7 @@ def act_save_website_brief(conn, body, user, req=None):
 def require_sender(conn) -> dict:
     sender = load_sender(conn)
     if not sender:
-        raise ValueError("Connect the domain sender first")
+        raise ValueError("Add a sender domain and make it active first")
     return sender
 
 
@@ -992,6 +1052,7 @@ def act_change_password(conn, body, user, req=None):
 ACTIONS = {
     "get_config": act_get_config, "save_google": act_save_google,
     "save_sender": act_save_sender, "test_sender": act_test_sender,
+    "set_active_sender": act_set_active_sender, "delete_sender": act_delete_sender,
     "save_ai": act_save_ai, "analyze_website": act_analyze_website, "save_website_brief": act_save_website_brief,
     "generate_drafts": act_generate_drafts, "create_draft": act_create_draft, "write_with_gemini": act_write_with_gemini,
     "save_draft": act_save_draft, "set_draft_status": act_set_draft_status, "delete_draft": act_delete_draft,
@@ -1186,7 +1247,7 @@ class handler(BaseHTTPRequestHandler):
             if conn: conn.rollback()
             frames = traceback.extract_tb(exc.__traceback__)[-4:]
             location = " > ".join(f"{frame.name}:{frame.lineno}" for frame in frames)
-            print(f"Mail Signal API request failed ({type(exc).__name__}; {location})", flush=True)
+            print(f"Mail Mantis API request failed ({type(exc).__name__}; {location})", flush=True)
             # Error classes only. Never return passwords, SMTP responses, or SQL details.
             reply(self, 503, {"error": f"Something went wrong ({type(exc).__name__}). Try again; if it keeps happening, check the app logs."})
         finally:

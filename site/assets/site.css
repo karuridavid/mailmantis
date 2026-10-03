@@ -188,3 +188,8 @@ details p { margin: 10px 0 0; }
 .docs > * { min-width: 0; }
 @media (max-width: 640px) { .prose table { display: block; overflow-x: auto; } .prose td code { white-space: normal; } }
 .checks code { padding: 1px 6px; border: 1px solid var(--border-strong); border-bottom-width: 2px; border-radius: 5px; font-size: 12.5px; }
+
+.btn.coffee { border-color: color-mix(in srgb, #f5b301 45%, var(--border-strong)); background: color-mix(in srgb, #ffdd00 18%, var(--surface)); }
+.btn.coffee:hover { background: color-mix(in srgb, #ffdd00 30%, var(--surface)); }
+[hidden] { display: none !important; }
+.logo { background: #0b0b0d; }

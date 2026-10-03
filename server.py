@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Standalone Mail Signal server for self-hosting (Docker or plain Python).
+"""Standalone Mail Mantis server for self-hosting (Docker or plain Python).
 
 Serves the dashboard and the same API that runs on Vercel. On first start it
 creates the encryption key and the one-time admin setup key in DATA_DIR unless
@@ -46,7 +46,7 @@ from api import app  # noqa: E402  (needs the secrets above)
 
 
 class Handler(app.handler):
-    server_version = "MailSignal"
+    server_version = "MailMantis"
     sys_version = ""
 
     def setup_request(self) -> None:
@@ -117,7 +117,7 @@ def main() -> None:
     port = int(os.getenv("PORT", "8080"))
     host = os.getenv("HOST", "0.0.0.0")
     announce_setup_key()
-    print(f"Mail Signal listening on http://{'localhost' if host == '0.0.0.0' else host}:{port}", flush=True)
+    print(f"Mail Mantis listening on http://{'localhost' if host == '0.0.0.0' else host}:{port}", flush=True)
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 
 
