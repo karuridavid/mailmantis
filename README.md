@@ -30,7 +30,7 @@ Open http://localhost:8080, enter the one-time setup key, and create your admin 
 
 For a public HTTPS domain, set `DOMAIN` and `TRUST_PROXY=1` in `.env` and run `docker compose --profile https up -d`. Caddy then handles the certificate.
 
-The full guide covers Google OAuth setup, HTTPS, Vercel + Neon, and configuration. It is in [`site/self-host.html`](site/self-host.html) and on the project site.
+The full guide covers Google OAuth setup, HTTPS, Vercel + Neon, and configuration. It is on the project site at [mailsignal.vercel.app/self-host](https://mailsignal.vercel.app/self-host).
 
 ## How it works
 
