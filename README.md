@@ -2,7 +2,7 @@
 
 **Know where your domain’s email lands.**
 
-Mail Mantis is a small, self-hosted dashboard for warming up and monitoring a custom domain with Gmail inboxes you own. Draft ordinary emails with Gemini, send them yourself, see whether Gmail put them in Primary, Promotions or Spam, and reply from the same place.
+Mail Mantis is a small, self-hosted dashboard for warming up and monitoring a custom domain with inboxes you own: Gmail and Google Workspace, Outlook and Microsoft 365, Yahoo, iCloud, AOL or any IMAP inbox. Draft ordinary emails with Gemini, send them yourself, see whether they landed in the inbox, a tab or spam, and reply from the same place.
 
 It is manual by design:
 - **Sending:** nothing is sent until you press Send.
@@ -40,7 +40,13 @@ The full guide covers Google OAuth setup, HTTPS, Vercel + Neon, and configuratio
 4. **Placement:** the app finds the exact `Message-ID` in the seed inbox and reads its labels. It reports Inbox (and the tab), Spam, Other folder, or Not found yet.
 5. **Reply:** reply from the seed inbox, in the same thread. You write the reply or have Gemini draft it.
 
-Gmail filters ("Never send to Spam", "Mark important") can be added per inbox and read back from Gmail to confirm they exist.
+When you choose, you can also act on a sent email: move it out of spam, or mark it important. These actions are not automatic.
+
+| Inbox | Connects with | Not spam | Important | Filters |
+| --- | --- | --- | --- | --- |
+| Gmail / Workspace | Google sign-in | Remove `SPAM` label | `IMPORTANT` label | Never send to Spam, Mark important |
+| Outlook / Microsoft 365 | Microsoft sign-in | Graph `markAsNotJunk` | High importance | Always Focused, Mark important rule |
+| Yahoo, iCloud, AOL, IMAP | App password | Move to INBOX | `\Flagged` | Not available over IMAP |
 
 ## Project layout
 
@@ -48,7 +54,8 @@ Gmail filters ("Never send to Spam", "Mark important") can be added per inbox an
 | --- | --- |
 | `index.html`, `app.js`, `app.css`, `assets/` | Dashboard (plain HTML/CSS/JS, no build step) |
 | `api/app.py` | API: one `POST /api/app` endpoint dispatching on `action`, plus the Google OAuth callback |
-| `gmail_api.py` | Small Gmail REST client (placement, send, filters) |
+| `gmail_api.py`, `microsoft_api.py`, `imap_box.py` | Mailbox clients for Gmail, Microsoft Graph and IMAP |
+| `site_reader.py` | Reads a business website's text for the Gemini brief |
 | `server.py` | Standalone server used by Docker; serves the dashboard and API |
 | `site/` | Public project website (static) |
 | `tests/` | Fake-services server, demo data and end-to-end API tests |
@@ -61,7 +68,7 @@ pip install -r requirements.txt
 DEMO=1 python tests/fake_server.py      # http://localhost:18080 — demo@example.com / demo-password-123
 ```
 
-`tests/fake_server.py` replaces Gmail, SMTP and Gemini with fakes. Against an empty database, run `python tests/test_api.py` for the end-to-end API tests.
+`tests/fake_server.py` replaces Gmail, Microsoft Graph, SMTP and Gemini with fakes. Against an empty database (and a [GreenMail](https://greenmail-mail-test.github.io/greenmail/) container for IMAP, see `tests/test_imap_box.py`), run `python tests/test_api.py` for the end-to-end API tests. `tests/test_clients.py` and `tests/test_imap_box.py` test the mailbox clients.
 
 ## Responsible use
 

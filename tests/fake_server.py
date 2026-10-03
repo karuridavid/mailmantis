@@ -18,9 +18,12 @@ os.environ.setdefault("DATABASE_URL", "postgresql://postgres:dev@localhost:55432
 os.environ.setdefault("APP_ENCRYPTION_KEY", "q3tjJ3o2YyKpWQ0P3m5JvE8b3o0w7Z2W1m8Wm4WlGr0=")
 os.environ.setdefault("ADMIN_SETUP_KEY", "setup-key-123")
 os.environ.setdefault("DATA_DIR", str(ROOT / ".data-test"))
+os.environ.setdefault("IMAP_INSECURE_TLS", "1")  # IMAP inboxes on localhost use GreenMail's self-signed certificate.
 sys.path.insert(0, str(ROOT))
 
 import gmail_api  # noqa: E402
+import microsoft_api  # noqa: E402
+import site_reader  # noqa: E402
 import server  # noqa: E402
 from api import app  # noqa: E402
 
@@ -31,9 +34,9 @@ PROFILE = {"email": "jane@gmail.com",
 NOT_FOUND = {"placement": "Not found", "tab": "", "labels": "", "gmail_id": "", "thread_id": ""}
 
 
-def fake_gemini(api_key, model, prompt, *, schema_def=None, use_url_context=False):
-    CALLS.append(["gemini", model, use_url_context])
-    if use_url_context:
+def fake_gemini(api_key, model, prompt, *, schema_def=None, research=False):
+    CALLS.append(["gemini", model, research, "<page_text>" in prompt])
+    if research:
         return {"summary": "Fernhill Pottery makes small-batch stoneware in Bristol and runs weekend wheel-throwing classes."}, ["https://example.com"]
     if '"emails"' in prompt:
         n = prompt.count("- ref ")
@@ -71,6 +74,32 @@ gmail_api.send = fake_gmail_send
 gmail_api.filter_status = lambda token, sender: {"never_spam": True, "important": False}
 gmail_api.create_never_spam_filter = fake_create_filter
 app.gemini_request = fake_gemini
+site_reader.read_site = lambda urls, **kw: ("[https://example.com] Title: Fernhill Pottery", ["https://example.com"])
+
+# Microsoft Graph fakes: one Outlook inbox whose messages live in MS_PLACEMENTS.
+MS_PROFILE = {"email": "sam@outlook.com"}
+MS_PLACEMENTS = {}
+MS_FILTERS = {"never_spam": False, "important": False}
+microsoft_api.exchange_code = lambda code, uri, client: (CALLS.append(["ms_exchange", uri, client["id"]]) or
+                                                         {"access_token": "ms-acc", "refresh_token": "ms-ref-" + code})
+microsoft_api.refresh = lambda refresh, client: ("ms-tok", refresh + "-rotated" if not refresh.endswith("-rotated") else refresh)
+microsoft_api.profile_email = lambda token: MS_PROFILE["email"]
+microsoft_api.find_message_placement = lambda token, mid: MS_PLACEMENTS.get(mid.strip("<>"), NOT_FOUND)
+def ms_not_junk(token, mid):
+    CALLS.append(["ms_not_junk", mid]); MS_PLACEMENTS[mid] = {**MS_PLACEMENTS[mid], "placement": "Inbox", "tab": "Focused", "labels": "INBOX,FOCUSED"}
+def ms_important(token, mid):
+    CALLS.append(["ms_important", mid]); MS_PLACEMENTS[mid] = {**MS_PLACEMENTS[mid], "labels": MS_PLACEMENTS[mid]["labels"] + ",IMPORTANT"}
+microsoft_api.not_junk = ms_not_junk
+microsoft_api.mark_important = ms_important
+microsoft_api.reply = lambda token, mid, body: (CALLS.append(["ms_reply", mid, body]) or {"message_id": "ms-reply@outlook.com", "gmail_id": "", "thread_id": "conv-1"})
+microsoft_api.filter_status = lambda token, sender: dict(MS_FILTERS)
+def ms_create_filter(token, sender, focused=False, important=False):
+    CALLS.append(["ms_filter", sender, focused, important])
+    MS_FILTERS["never_spam"] |= focused; MS_FILTERS["important"] |= important
+    return True
+microsoft_api.create_filter = ms_create_filter
+gmail_api.not_spam = lambda token, mid: CALLS.append(["gmail_not_spam", mid])
+gmail_api.mark_important = lambda token, mid: CALLS.append(["gmail_important", mid])
 app.smtp_send = fake_smtp_send
 app.verify_smtp = fake_verify_smtp
 
@@ -83,6 +112,8 @@ class TestHandler(server.Handler):
                 PLACEMENTS[body["message_id"]] = body["result"]
             elif self.path == "/__test/profile":
                 PROFILE.update(body)
+            elif self.path == "/__test/ms_placement":
+                MS_PLACEMENTS[body["message_id"]] = body["result"]
             data = json.dumps({"ok": True, "calls": CALLS}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

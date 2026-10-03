@@ -177,3 +177,21 @@ def send(account: str, token: str, recipient: str, subject: str, body: str,
     return {"message_id": message_id.strip("<>"), "gmail_id": str(result.get("id", "")),
             "thread_id": str(result.get("threadId", ""))}
 
+
+
+def _gmail_id(token: str, rfc822_message_id: str) -> str:
+    found = find_message_placement(token, rfc822_message_id)
+    if not found["gmail_id"]:
+        raise ValueError("The message was not found in this inbox")
+    return found["gmail_id"]
+
+
+def not_spam(token: str, rfc822_message_id: str) -> None:
+    """Report not spam: remove the SPAM label and put the message in the Inbox."""
+    _api(token, "/messages/" + quote(_gmail_id(token, rfc822_message_id), safe="") + "/modify",
+         payload={"removeLabelIds": ["SPAM"], "addLabelIds": ["INBOX"]})
+
+
+def mark_important(token: str, rfc822_message_id: str) -> None:
+    _api(token, "/messages/" + quote(_gmail_id(token, rfc822_message_id), safe="") + "/modify",
+         payload={"addLabelIds": ["IMPORTANT"]})

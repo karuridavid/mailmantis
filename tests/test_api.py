@@ -1,14 +1,16 @@
 """End-to-end API test. Start tests/fake_server.py first (fake Gmail/SMTP/Gemini, real Postgres, empty database)."""
-import json, re, sys, urllib.request, urllib.error, urllib.parse, http.client
+import imaplib, json, os, re, ssl, sys, time, urllib.request, urllib.error, urllib.parse, http.client
+from email.message import EmailMessage
 
 BASE = "http://127.0.0.1:18080"
 cookie = ""
 failures = 0
 
 
-def call(action, expect=200, **data):
+def call(endpoint, expect=200, **data):
     global cookie
-    req = urllib.request.Request(BASE + "/api/app", data=json.dumps({"action": action, **data}).encode(),
+    action = endpoint
+    req = urllib.request.Request(BASE + "/api/app", data=json.dumps({"action": endpoint, **data}).encode(),
                                  headers={"Content-Type": "application/json", "Cookie": cookie}, method="POST")
     try:
         resp = urllib.request.urlopen(req)
@@ -202,6 +204,84 @@ call("delete_sender", expect=400, id=second)  # active with others present
 call("set_active_sender", id=first["id"])
 call("delete_sender", id=second)
 check(len(call("get_config")["senders"]) == 1, "inactive domain deleted")
+
+# --- Gemini brief uses the site text and research tools
+g = [c for c in calls("gemini") if c[2]]
+check(g and g[-1][3], "website brief sends fetched page text with URL context + search")
+
+# --- Microsoft (Outlook) inboxes
+call("microsoft_oauth_start", expect=400, purpose="connect")
+call("save_microsoft", expect=400, client_id="not-a-guid", client_secret="x")
+call("save_microsoft", client_id="11111111-2222-3333-4444-555555555555", client_secret="ms-secret")
+cfg = call("get_config")
+check(cfg["microsoft"]["ready"] and cfg["microsoft"]["redirect_uri"] == BASE + "/api/microsoft_oauth_callback", "microsoft client saved, redirect derived")
+
+def ms_oauth(purpose, seed_id="", name=""):
+    url = call("microsoft_oauth_start", purpose=purpose, seed_id=seed_id, name=name)["url"]
+    check(url.startswith("https://login.microsoftonline.com/common/oauth2/v2.0/authorize"), "microsoft authorize URL")
+    state = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["state"][0]
+    conn = http.client.HTTPConnection("127.0.0.1", 18080)
+    conn.request("GET", "/api/microsoft_oauth_callback?" + urllib.parse.urlencode({"state": state, "code": "m" + purpose}))
+    return conn.getresponse().getheader("Location")
+
+check(ms_oauth("connect", name="Sam") == "/?google=connected", "outlook inbox connected")
+sam = {x["email"]: x for x in call("get_config")["seeds"]}["sam@outlook.com"]
+check(sam["kind"] == "microsoft" and sam["provider"] == "outlook" and sam["gmail_send_enabled"], "outlook seed stored")
+check(ms_oauth("filter", seed_id=sam["id"]) == "/?google=filter_added", "outlook Always Focused override")
+check(ms_oauth("filter_important", seed_id=sam["id"]) == "/?google=filter_added", "outlook important rule")
+sam = {x["email"]: x for x in call("get_config")["seeds"]}["sam@outlook.com"]
+check(sam["filter_never_spam"] is True and sam["filter_important"] is True, "outlook filter status stored")
+check(calls("ms_filter")[-2][1:] == ["hi@example.com", True, False] and calls("ms_filter")[-1][1:] == ["hi@example.com", False, True], "filters created for the sender")
+
+ms_draft = call("create_draft", seed_id=sam["id"], subject="Hello Sam", body="Hi Sam")["id"]
+call("set_draft_status", id=ms_draft, status="ready"); call("send_draft", id=ms_draft)
+ms_msg = {d["id"]: d for d in call("get_config")["drafts"]}[ms_draft]["message_id"]
+hook("ms_placement", message_id=ms_msg, result={"placement": "Spam", "tab": "", "labels": "JUNK", "gmail_id": "AAMk1", "thread_id": "conv-1"})
+check(call("check_placement", id=ms_draft)["results"][0]["placement"] == "Spam", "outlook Junk reported as Spam")
+import psycopg
+with psycopg.connect(os.environ.get("DATABASE_URL", "postgresql://postgres:dev@localhost:55432/postgres")) as db:
+    from cryptography.fernet import Fernet
+    stored = db.execute("SELECT oauth_refresh_enc FROM seed_accounts WHERE id=%s", (sam["id"],)).fetchone()[0]
+    key = os.environ.get("APP_ENCRYPTION_KEY", "q3tjJ3o2YyKpWQ0P3m5JvE8b3o0w7Z2W1m8Wm4WlGr0=")
+    check(Fernet(key.encode()).decrypt(stored.encode()).decode().endswith("-rotated"), "rotated Microsoft refresh token saved")
+r = call("message_action", id=ms_draft, op="not_spam")
+check(r["result"]["placement"] == "Inbox" and r["result"]["tab"] == "Focused", "outlook not junk -> Inbox · Focused")
+r = call("message_action", id=ms_draft, op="important")
+check("IMPORTANT" in r["result"]["labels"], "outlook mark important")
+call("message_action", expect=400, id=ms_draft, op="delete")
+ms_reply = call("create_draft", parent_id=ms_draft)["id"]
+call("save_draft", id=ms_reply, subject="Re: Hello Sam", body="Thanks!"); call("set_draft_status", id=ms_reply, status="ready")
+call("send_draft", id=ms_reply)
+check(calls("ms_reply")[-1][1:] == [ms_msg, "Thanks!"], "outlook reply sent in thread")
+res = call("check_filters")["results"]
+check(res[sam["id"]] == {"never_spam": True, "important": True}, "check_filters reads outlook")
+
+# --- IMAP inboxes (real GreenMail server on localhost)
+GM = {"provider": "imap", "email": "seed@test.local", "imap_host": "localhost", "imap_port": 3993, "smtp_host": "localhost", "smtp_port": 3465}
+call("connect_imap", expect=400, **GM, password="wrong")
+call("connect_imap", expect=400, provider="yahoo", email="x@yahoo.com", password="")
+r = call("connect_imap", **GM, password="apppass", name="Gina")
+check(r["message"] == "Other IMAP inbox connected", "imap inbox connected after sign-in test")
+gina = {x["email"]: x for x in call("get_config")["seeds"]}["seed@test.local"]
+check(gina["kind"] == "imap" and gina["imap_host"] == "localhost" and gina["gmail_send_enabled"], "imap seed stored")
+im_draft = call("create_draft", seed_id=gina["id"], subject="Hello Gina", body="Hi Gina")["id"]
+call("set_draft_status", id=im_draft, status="ready"); call("send_draft", id=im_draft)
+im_msg = {d["id"]: d for d in call("get_config")["drafts"]}[im_draft]["message_id"]
+ctx = ssl._create_unverified_context()
+box = imaplib.IMAP4_SSL("localhost", 3993, ssl_context=ctx); box.login("seed@test.local", "apppass")
+box.create("Junk")
+m = EmailMessage(); m["From"] = "hi@example.com"; m["To"] = "seed@test.local"; m["Subject"] = "Hello Gina"; m["Message-ID"] = f"<{im_msg}>"; m.set_content("Hi")
+box.append("Junk", None, imaplib.Time2Internaldate(time.time()), m.as_bytes()); box.logout()
+check(call("check_placement", id=im_draft)["results"][0]["placement"] == "Spam", "imap Junk reported as Spam")
+r = call("message_action", id=im_draft, op="not_spam")
+check(r["result"]["placement"] == "Inbox", "imap not spam moves to INBOX")
+r = call("message_action", id=im_draft, op="important")
+check("FLAGGED" in r["result"]["labels"], "imap important flags message")
+im_reply = call("create_draft", parent_id=im_draft)["id"]
+call("save_draft", id=im_reply, subject="Re: Hello Gina", body="Lovely, thanks"); call("set_draft_status", id=im_reply, status="ready")
+call("send_draft", id=im_reply)
+check({d["id"]: d for d in call("get_config")["drafts"]}[im_reply]["status"] == "sent", "imap reply sent over SMTP")
+check(gina["id"] not in call("check_filters")["results"], "imap inboxes skipped by filter checks")
 
 # --- removed actions are gone
 call("run_check", expect=400)

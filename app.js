@@ -89,6 +89,9 @@ const sentEmails = () => domainEmails().filter(d => d.status === 'sent');
 const repliesOf = id => S.drafts.filter(d => d.parent_id === id).sort((a, b) => ms(a.created_at) - ms(b.created_at));
 const waiting = d => d.kind === 'domain' && d.status === 'sent' && (!d.placement || d.placement === 'Not found');
 const editable = d => d.status === 'draft' || d.status === 'ready';
+const PROVIDERS = {gmail: 'Gmail', workspace: 'Google Workspace', outlook: 'Outlook', yahoo: 'Yahoo Mail', aol: 'AOL Mail', icloud: 'iCloud Mail', imap: 'IMAP'};
+const seedKind = s => s ? ({google_oauth: 'google', microsoft_oauth: 'microsoft'})[s.auth_type] || 'imap' : 'imap';
+const canReply = s => s && (seedKind(s) !== 'google' || s.gmail_send_enabled);
 const checkedPlacement = d => ['Inbox', 'Spam', 'Other folder'].includes(d.placement);
 
 // Status model: k is the colour key (draft ready sent inbox tab spam).
@@ -97,7 +100,7 @@ function st(d) {
   if (d.status === 'ready') return {k: 'ready', label: 'Ready to send'};
   if (d.kind === 'reply') return {k: 'sent', label: 'Reply sent'};
   if (d.placement === 'Inbox') {
-    if (d.inbox_tab && d.inbox_tab !== 'Primary') return {k: 'tab', label: 'Inbox · ' + d.inbox_tab, short: d.inbox_tab};
+    if (d.inbox_tab && !['Primary', 'Focused'].includes(d.inbox_tab)) return {k: 'tab', label: 'Inbox · ' + d.inbox_tab, short: d.inbox_tab};
     return {k: 'inbox', label: d.inbox_tab ? 'Inbox · Primary' : 'Inbox', short: 'Primary'};
   }
   if (d.placement === 'Spam') return {k: 'spam', label: 'Spam'};
@@ -285,7 +288,7 @@ function overview() {
     ['Sender domain', 'Connect and test SMTP', !!(S.sender && S.sender.verified_at), '#/domains'],
     ['Business brief', 'Describe the business', !!S.website_summary, '#/domains'],
     ['Gemini key', 'For writing drafts', S.ai_provider === 'gemini' && S.has_ai_key, '#/settings'],
-    ['Google sign-in', 'OAuth client for Gmail', !!S.google.ready, '#/settings'],
+    ['Inbox sign-in', 'Google, Microsoft or IMAP', !!(S.google.ready || S.microsoft.ready || S.seeds.some(x => seedKind(x) === 'imap')), '#/settings'],
     ['Seed inbox', 'Connect a Gmail inbox', S.seeds.some(x => x.enabled), '#/seeds'],
     ['First email', 'Draft and send one', sentEmails().length > 0, '#/emails']
   ];
@@ -472,18 +475,26 @@ function detail(d) {
 
 function placementCard(d) {
   const s = st(d);
+  const seed = seedOf(d.seed_email);
+  const where = PROVIDERS[seed ? seed.provider : 'gmail'] || 'The inbox';
   const icons = {inbox: 'inbox', tab: 'folder', spam: 'alert', sent: 'clock'};
   const title = s.k === 'sent' ? (d.placement === 'Not found' ? 'Not found yet' : 'Waiting for the first check') : s.label;
   const why = {
-    inbox: 'Gmail delivered this to the Primary inbox.',
-    tab: d.placement === 'Other folder' ? 'Found outside Inbox and Spam (archived or labelled).' : 'Delivered to the inbox, but Gmail sorted it into the ' + d.inbox_tab + ' tab.',
-    spam: 'Gmail put this in Spam. Open the inbox, mark it “Not spam”, then reply. Also check SPF, DKIM and DMARC for your domain.',
-    sent: d.placement === 'Not found' ? 'Gmail hasn’t shown this message yet. Delivery can take a few minutes.' : 'The dashboard checks automatically while it’s open.'
+    inbox: `${where} delivered this to the ${d.inbox_tab === 'Focused' ? 'Focused' : 'Primary'} inbox.`,
+    tab: d.placement === 'Other folder' ? 'Found outside Inbox and Spam (archived or in another folder).' : `Delivered, but ${where} sorted it into ${d.inbox_tab === 'Other' ? 'the Other inbox' : 'the ' + d.inbox_tab + ' tab'}.`,
+    spam: `${where} put this in spam. Use Not spam below to move it to the inbox, then reply. Also check SPF, DKIM and DMARC for your domain.`,
+    sent: d.placement === 'Not found' ? 'The message hasn’t shown up yet. Delivery can take a few minutes.' : 'The dashboard checks automatically while it’s open.'
   }[s.k];
-  const labels = d.gmail_labels ? `<div class="labels">${d.gmail_labels.split(',').filter(Boolean).map(l => `<span class="chip">${esc(l)}</span>`).join('')}</div>` : '';
+  const labels = (d.gmail_labels || '').split(',').filter(Boolean);
+  const marked = labels.some(l => ['IMPORTANT', 'FLAGGED'].includes(l));
+  const found = ['Inbox', 'Spam', 'Other folder'].includes(d.placement);
+  const actions = found ? `<div class="placement-actions">
+      ${d.placement !== 'Inbox' ? btn('message-action', 'Not spam · move to inbox', {ico: 'inbox', cls: 'sm', id: d.id, attrs: 'data-v="not_spam"'}) : ''}
+      ${marked ? '<span class="pill s-inbox">Marked important</span>' : btn('message-action', seedKind(seed) === 'imap' ? 'Flag as important' : 'Mark important', {ico: 'star', cls: 'sm', id: d.id, attrs: 'data-v="important"'})}
+      <span class="hint">Only happens when you click. Checks never change anything.</span></div>` : '';
   return `<div class="section-title">Placement</div>
-    <div class="placement s-${s.k}"><span class="big">${icon(icons[s.k])}</span><div><h3>${esc(title)}</h3><p>${esc(why)}${d.checked_at ? ` <span class="faint">Checked ${ago(d.checked_at, true)}.</span>` : ''}</p>${labels}</div>
-    ${btn('check', 'Check again', {ico: 'refresh', cls: 'sm', id: d.id})}</div>`;
+    <div class="placement s-${s.k}"><span class="big">${icon(icons[s.k])}</span><div><h3>${esc(title)}</h3><p>${esc(why)}${d.checked_at ? ` <span class="faint">Checked ${ago(d.checked_at, true)}.</span>` : ''}</p>${labels.length ? `<div class="labels">${labels.map(l => `<span class="chip">${esc(l)}</span>`).join('')}</div>` : ''}</div>
+    ${btn('check', 'Check again', {ico: 'refresh', cls: 'sm', id: d.id})}</div>${actions}`;
 }
 
 function timeline(d) {
@@ -511,7 +522,7 @@ function repliesSection(d) {
       : `<pre class="body-text">${esc(r.body)}</pre>`;
     return `<div class="reply" data-reply="${esc(r.id)}">${head}${body}</div>`;
   }).join('');
-  const blocked = seed && seed.auth_type === 'google_oauth' && !seed.gmail_send_enabled;
+  const blocked = seed && !canReply(seed);
   return `<div class="section-title">Replies <span class="count">${reps.length}</span></div>
     ${blocked ? `<div class="callout warn">${icon('key')}<div>${esc(nameOf(d.seed_email))} can’t send replies yet. ${btn('allow', 'Allow sending replies', {cls: 'sm', id: seed.id})}</div></div>` : ''}
     ${list}${open ? '' : `<div style="margin-top:12px">${btn('reply', reps.length ? 'Reply again' : 'Reply from ' + esc(nameOf(d.seed_email)), {ico: 'reply', id: d.id})}</div>`}`;
@@ -519,26 +530,30 @@ function repliesSection(d) {
 
 // ------------------------------------------------------------------ seeds
 
-function filterState(v, label) {
+function filterState(v) {
   if (v === true) return `<span class="pill s-inbox">On</span>`;
   if (v === false) return `<span class="pill s-draft">Off</span>`;
-  return `<span class="pill plain s-draft" title="Choose Check filters to read it from Gmail">Unknown</span>`;
+  return `<span class="pill plain s-draft" title="Choose Check filters to read it from the inbox">Unknown</span>`;
 }
 
 function seeds() {
-  const g = S.google;
   const cards = S.seeds.map(s => {
-    const oauth = s.auth_type === 'google_oauth';
+    const kind = seedKind(s);
     const sent = sentEmails().filter(d => d.seed_email === s.email).sort((a, b) => ms(a.sent_at) - ms(b.sent_at));
     const last = sent.slice(-10);
+    const rule = (label, value, act) => `<div class="kv-row"><span class="k">${label}</span>${filterState(value)}${value !== true ? btn(act, 'Add', {cls: 'sm', id: s.id}) : ''}</div>`;
+    let rows = '';
+    if (kind === 'google') rows = `<div class="kv-row"><span class="k">Send replies</span>${s.gmail_send_enabled ? '<span class="pill s-inbox">Allowed</span>' : btn('allow', 'Allow', {cls: 'sm', id: s.id})}</div>`
+      + rule('Never send to Spam', s.filter_never_spam, 'filter-spam') + rule('Mark important', s.filter_important, 'filter-important');
+    else if (kind === 'microsoft') rows = `<div class="kv-row"><span class="k">Send replies</span><span class="pill s-inbox">Allowed</span></div>`
+      + rule('Always Focused', s.filter_never_spam, 'filter-spam') + rule('Mark important rule', s.filter_important, 'filter-important');
+    else rows = `<div class="kv-row"><span class="k">Send replies</span><span class="pill s-inbox">Via SMTP</span></div>
+      <div class="kv-row"><span class="k">Filters</span><span class="hint" style="text-align:right">Not available over IMAP. Use Not spam and Flag on each email.</span></div>
+      <div class="kv-row"><span class="k">Server</span><span class="mono small muted">${esc(s.imap_host || (S.imap_presets[s.provider] || {}).imap_host || 'imap.gmail.com')}</span></div>`;
     return `<div class="card seed-card ${s.enabled ? '' : 'paused'}">
       <div class="card-head">${avatar(s.email)}<div class="who"><b>${esc(s.name || s.email.split('@')[0])}</b><span>${esc(s.email)}</span></div>
-        <span class="pill plain">${s.provider === 'workspace' ? 'Workspace' : 'Gmail'}</span></div>
-      <div class="kv">
-        ${oauth ? `<div class="kv-row"><span class="k">Send replies</span>${s.gmail_send_enabled ? '<span class="pill s-inbox">Allowed</span>' : btn('allow', 'Allow', {cls: 'sm', id: s.id})}</div>
-        <div class="kv-row"><span class="k">Never send to Spam</span>${filterState(s.filter_never_spam)}${s.filter_never_spam !== true ? btn('filter-spam', 'Add', {cls: 'sm', id: s.id}) : ''}</div>
-        <div class="kv-row"><span class="k">Mark important</span>${filterState(s.filter_important)}${s.filter_important !== true ? btn('filter-important', 'Add', {cls: 'sm', id: s.id}) : ''}</div>`
-        : `<div class="kv-row"><span class="k">Connected with an App Password (legacy). Reconnect with Google to reply and manage filters.</span></div>`}
+        <span class="pill plain">${esc(PROVIDERS[s.provider] || s.provider)}</span></div>
+      <div class="kv">${rows}
         <div class="kv-row"><span class="k">Recent placement</span><div class="cells">${last.length ? last.map(d => { const x = st(d); return `<a class="cell s-${x.k} ${x.k === 'sent' ? 'wait' : ''}" href="#/emails/${esc(d.id)}" title="${esc(d.subject + ' · ' + x.label)}"></a>`; }).join('') : '<span class="faint small">None yet</span>'}</div></div>
       </div>
       <div class="card-foot">${btn('rename', 'Rename', {cls: 'sm ghost', ico: 'pencil', id: s.id})}${btn('toggle-seed', s.enabled ? 'Pause' : 'Resume', {cls: 'sm ghost', ico: s.enabled ? 'pause' : 'play', id: s.id})}
@@ -547,12 +562,12 @@ function seeds() {
   }).join('');
   const checked = S.seeds.map(s => s.filters_checked_at).filter(Boolean).sort().pop();
   return header('Seed inboxes', plural(S.seeds.filter(s => s.enabled).length, 'active inbox', 'active inboxes'),
-      btn('check-filters', 'Check filters', {ico: 'shield', cls: 'hide-sm', disabled: !S.sender || !S.seeds.some(s => s.auth_type === 'google_oauth')}) +
-      btn('connect', 'Connect inbox', {ico: 'plus', cls: 'primary', disabled: !g.ready, title: g.ready ? '' : 'Add your Google OAuth client in Settings first'})) +
+      btn('check-filters', 'Check filters', {ico: 'shield', cls: 'hide-sm', disabled: !S.sender || !S.seeds.some(s => seedKind(s) !== 'imap')}) +
+      btn('connect', 'Connect inbox', {ico: 'plus', cls: 'primary'})) +
     `<div class="page"><div class="stack">
-      ${g.ready ? '' : `<div class="callout warn">${icon('key')}<div>Google sign-in isn’t set up. Add your OAuth client under <a href="#/settings"><b>Settings</b></a> to connect Gmail inboxes.</div></div>`}
-      <div class="callout">${icon('shield')}<div><b>About filters.</b> “Never send to Spam” and “Mark important” add a Gmail filter for ${S.sender ? esc(S.sender.email) : 'your sender'} in that inbox. They only affect mail that arrives afterwards, and they change placement results. Leave them off where you want Gmail’s natural decision.${checked ? ` <span class="faint">Filters last read ${ago(checked, true)}.</span>` : ''}</div></div>
-      ${S.seeds.length ? `<div class="seed-grid">${cards}</div>` : `<div class="card">${empty('users', 'No seed inboxes', 'Connect Gmail or Google Workspace inboxes you own. They receive your domain’s emails and can reply from here.', g.ready ? btn('connect', 'Connect inbox', {ico: 'plus', cls: 'primary sm'}) : '')}</div>`}
+      ${S.google.ready || S.microsoft.ready ? '' : `<div class="callout">${icon('key')}<div>To connect Gmail or Outlook inboxes with sign-in, add a Google or Microsoft app under <a href="#/settings"><b>Settings</b></a>. Yahoo, iCloud, AOL and other IMAP inboxes only need an app password.</div></div>`}
+      <div class="callout">${icon('shield')}<div><b>About filters.</b> Gmail filters can keep ${S.sender ? esc(S.sender.email) : 'your sender'} out of Spam and mark it important; Outlook can keep it in Focused and mark it important. IMAP inboxes have no filters, so use Not spam and Flag on each email. Filters only affect mail that arrives afterwards and they change placement results, so leave them off where you want the provider’s natural decision.${checked ? ` <span class="faint">Filters last read ${ago(checked, true)}.</span>` : ''}</div></div>
+      ${S.seeds.length ? `<div class="seed-grid">${cards}</div>` : `<div class="card">${empty('users', 'No seed inboxes', 'Connect Gmail, Outlook, Yahoo, iCloud or other inboxes you own. They receive your domain’s emails and can reply from here.', btn('connect', 'Connect inbox', {ico: 'plus', cls: 'primary sm'}))}</div>`}
     </div></div>`;
 }
 
@@ -635,6 +650,14 @@ function settings() {
         : `<div class="field" style="margin-top:14px"><label class="label" for="s-gid">Client ID</label><input class="input mono" id="s-gid" data-form="google" name="client_id" value="${esc(formVal('google', 'client_id', g.client_id))}" placeholder="….apps.googleusercontent.com"></div>
         <div class="field"><label class="label" for="s-gsecret">Client secret</label><input class="input" id="s-gsecret" type="password" autocomplete="new-password" data-form="google" name="client_secret" value="${esc(formVal('google', 'client_secret'))}" placeholder="${g.ready ? 'Saved. Leave blank to keep it' : ''}"></div>
         <div style="margin-top:14px">${btn('save-google', 'Save', {cls: 'primary'})}</div>`}</div></section>
+
+    <section class="settings-section"><div><h3>Microsoft sign-in</h3><p>App registration used to connect Outlook.com and Microsoft 365 inboxes. ${S.microsoft.ready ? '<span class="pill s-inbox" style="margin-top:8px">Ready</span>' : '<span class="pill s-tab" style="margin-top:8px">Not set</span>'}</p></div>
+      <div><div class="field"><span class="label">Redirect URI (Web platform)</span><div class="copy"><code>${esc(S.microsoft.redirect_uri)}</code>${btn('copy', '', {ico: 'copy', cls: 'sm icon ghost', attrs: `data-v="${esc(S.microsoft.redirect_uri)}"`, title: 'Copy'})}</div>
+        <span class="hint">Register an app in Microsoft Entra for “Accounts in any organizational directory and personal Microsoft accounts”, add this redirect URI, and create a client secret.</span></div>
+        ${S.microsoft.source === 'env' ? `<div class="callout" style="margin-top:14px">${icon('key')}<div>Set by environment variables on this server.</div></div>`
+        : `<div class="field" style="margin-top:14px"><label class="label" for="s-mid">Application (client) ID</label><input class="input mono" id="s-mid" data-form="microsoft" name="client_id" value="${esc(formVal('microsoft', 'client_id', S.microsoft.client_id))}" placeholder="00000000-0000-0000-0000-000000000000"></div>
+        <div class="field"><label class="label" for="s-msecret">Client secret value</label><input class="input" id="s-msecret" type="password" autocomplete="new-password" data-form="microsoft" name="client_secret" value="${esc(formVal('microsoft', 'client_secret'))}" placeholder="${S.microsoft.ready ? 'Saved. Leave blank to keep it' : ''}"></div>
+        <div style="margin-top:14px">${btn('save-microsoft', 'Save', {cls: 'primary'})}</div>`}</div></section>
 
     <section class="settings-section"><div><h3>Password</h3><p>Signed in as ${esc(S.user.email)}. Changing it signs you out everywhere.</p></div>
       <div><div class="field-row"><div class="field"><label class="label" for="s-cur">Current password</label><input class="input" id="s-cur" type="password" autocomplete="current-password" data-form="pw" name="current"></div>
@@ -773,7 +796,7 @@ const ACTIONS = {
     await withBusy(el, async () => {
       const r = (await api('check_placement', {id: el.dataset.id})).results[0];
       await load();
-      toast('Gmail reports: ' + r.placement + (r.tab ? ' · ' + r.tab : ''));
+      toast('Inbox reports: ' + r.placement + (r.tab ? ' · ' + r.tab : ''));
     });
   },
   async reply(el) {
@@ -787,13 +810,35 @@ const ACTIONS = {
   async allow(el) { await googleFlow('send', el.dataset.id); },
   async 'filter-spam'(el) {
     const s = S.seeds.find(x => x.id === el.dataset.id);
-    if (!await confirmBox({title: 'Never send to Spam?', text: `Creates a Gmail filter in ${s.email} so mail from ${S.sender ? S.sender.email : 'your sender'} skips Spam.\n\nIt only affects future emails, and placement results for this inbox won’t show Gmail’s natural decision.`, ok: 'Continue with Google'})) return;
+    const from = S.sender ? S.sender.email : 'your sender';
+    if (seedKind(s) === 'microsoft') {
+      if (!await confirmBox({title: 'Always Focused?', text: `Adds a Focused Inbox override in ${s.email} so mail from ${from} always lands in Focused rather than Other.\n\nOutlook’s junk filtering can’t be switched off through Microsoft Graph, so this doesn’t stop Junk. Use Not spam on an email for that.`, ok: 'Continue with Microsoft'})) return;
+      return oauthFlow('microsoft', 'filter', s.id);
+    }
+    if (!await confirmBox({title: 'Never send to Spam?', text: `Creates a Gmail filter in ${s.email} so mail from ${from} skips Spam.\n\nIt only affects future emails, and placement results for this inbox won’t show Gmail’s natural decision.`, ok: 'Continue with Google'})) return;
     await googleFlow('filter', s.id);
   },
   async 'filter-important'(el) {
     const s = S.seeds.find(x => x.id === el.dataset.id);
-    if (!await confirmBox({title: 'Mark as important?', text: `Creates a Gmail filter in ${s.email} that marks mail from ${S.sender ? S.sender.email : 'your sender'} as important. It only affects future emails.`, ok: 'Continue with Google'})) return;
+    const ms_ = seedKind(s) === 'microsoft';
+    if (!await confirmBox({title: 'Mark as important?', text: `Creates ${ms_ ? 'an inbox rule' : 'a Gmail filter'} in ${s.email} that marks mail from ${S.sender ? S.sender.email : 'your sender'} as important. It only affects future emails.`, ok: ms_ ? 'Continue with Microsoft' : 'Continue with Google'})) return;
+    if (ms_) return oauthFlow('microsoft', 'filter_important', s.id);
     await googleFlow('filter_important', s.id);
+  },
+  async 'message-action'(el) {
+    await withBusy(el, async () => {
+      const r = await api('message_action', {id: el.dataset.id, op: el.dataset.v});
+      await load();
+      toast(r.message);
+    });
+  },
+  async 'save-microsoft'(el) {
+    await withBusy(el, async () => {
+      await api('save_microsoft', {client_id: formVal('microsoft', 'client_id', S.microsoft.client_id), client_secret: formVal('microsoft', 'client_secret')});
+      delete ui.forms.microsoft;
+      await load();
+      toast('Microsoft sign-in saved');
+    });
   },
   async rename(el) {
     const s = S.seeds.find(x => x.id === el.dataset.id);
@@ -814,14 +859,10 @@ const ACTIONS = {
       const r = await api('check_filters');
       const failed = Object.values(r.results).filter(x => x.error).length;
       await load();
-      toast(failed ? plural(failed, 'inbox', 'inboxes') + ' could not be read. Reconnect them.' : 'Filters read from Gmail', failed ? 'err' : 'ok');
+      toast(failed ? plural(failed, 'inbox', 'inboxes') + ' could not be read. Reconnect them.' : 'Filters read from the inboxes', failed ? 'err' : 'ok');
     });
   },
-  async connect() {
-    const name = await promptBox({title: 'Connect a Gmail inbox', text: 'You’ll choose the account on Google’s screen and approve reading and sending.', label: 'First name for greetings (optional)', placeholder: 'Jane', ok: 'Continue with Google'});
-    if (name === null) return;
-    await googleFlow('connect', '', name);
-  },
+  connect() { connectDialog(); },
 
   async 'test-sender'(el) {
     await withBusy(el, async () => { const r = await api('test_sender', senderPayload(el.dataset.id)); senderMessage(r.message, true); })
@@ -900,6 +941,70 @@ const ACTIONS = {
     });
   }
 };
+
+async function oauthFlow(provider, purpose, seedId, name = '') {
+  const d = await api(provider === 'microsoft' ? 'microsoft_oauth_start' : 'google_oauth_start', {purpose, seed_id: seedId, name});
+  location.assign(d.url);
+}
+
+// Pick a provider, then sign in with Google or Microsoft, or enter IMAP details with an app password.
+async function connectDialog() {
+  const options = [
+    ['google', 'Gmail or Google Workspace', 'Sign in with Google', S.google.ready ? '' : 'Add the Google OAuth client in Settings first'],
+    ['microsoft', 'Outlook or Microsoft 365', 'Sign in with Microsoft', S.microsoft.ready ? '' : 'Add the Microsoft app registration in Settings first'],
+    ...['yahoo', 'icloud', 'aol', 'imap'].map(k => [k, S.imap_presets[k].label, k === 'imap' ? 'Any provider, with IMAP and SMTP' : 'App password over IMAP', ''])
+  ];
+  const picked = await openDialog(`<form method="dialog">
+    <div class="dlg-head"><h2>Connect a seed inbox</h2><p>Use an inbox you own. Gmail and Outlook connect with sign-in; other providers use an app password over IMAP.</p></div>
+    <div class="dlg-body"><div class="pick">${options.map(([k, label, sub, blocked], i) => `<label${blocked ? ' class="faint" title="' + esc(blocked) + '"' : ''}><input type="radio" class="checkbox" name="provider" value="${k}" ${i === 0 && !blocked ? 'checked' : ''} ${blocked ? 'disabled' : ''}><div>${esc(label)}<span>${esc(blocked || sub)}</span></div></label>`).join('')}</div>
+      <div class="field" style="margin-top:14px"><label class="label" for="c-name">First name for greetings <span class="faint">(optional)</span></label><input class="input" id="c-name" placeholder="Jane" maxlength="100"></div></div>
+    <div class="dlg-foot"><button type="button" class="btn" data-close>Cancel</button><button class="btn primary" value="ok">Continue</button></div></form>`);
+  if (picked !== 'ok') return;
+  const provider = $('input[name=provider]:checked', dialog)?.value;
+  const name = $('#c-name', dialog).value;
+  if (!provider) return;
+  try {
+    if (provider === 'google' || provider === 'microsoft') return await oauthFlow(provider, 'connect', '', name);
+    await imapDialog(provider, name);
+  } catch (err) { toast(err.message, 'err'); }
+}
+
+async function imapDialog(provider, name) {
+  const preset = S.imap_presets[provider];
+  const custom = provider === 'imap';
+  openDialog(`<form method="dialog" id="imap-form">
+    <div class="dlg-head"><h2>Connect ${esc(preset.label)}</h2><p>${esc(preset.help)} Your normal password won’t work. The app password is encrypted when saved.</p></div>
+    <div class="dlg-body">
+      <div class="field"><label class="label" for="i-email">Email address</label><input class="input" id="i-email" type="email" required autocomplete="off"></div>
+      <div class="field"><label class="label" for="i-pass">App password</label><input class="input" id="i-pass" type="password" required autocomplete="new-password"></div>
+      ${custom ? `<div class="field-row"><div class="field"><label class="label" for="i-ih">IMAP server</label><input class="input" id="i-ih" placeholder="imap.example.com"></div><div class="field"><label class="label" for="i-ip">IMAP port</label><input class="input" id="i-ip" value="993" inputmode="numeric"></div></div>
+      <div class="field-row"><div class="field"><label class="label" for="i-sh">SMTP server</label><input class="input" id="i-sh" placeholder="smtp.example.com"></div><div class="field"><label class="label" for="i-sp">SMTP port</label><input class="input" id="i-sp" value="587" inputmode="numeric"></div></div>
+      <div class="field"><label class="label" for="i-login">Login <span class="faint">(if not the email address)</span></label><input class="input" id="i-login" autocomplete="off"></div>`
+      : `<p class="hint" style="margin:0">Servers: <span class="mono">${esc(preset.imap_host)}</span> and <span class="mono">${esc(preset.smtp_host)}</span></p>`}
+      <p class="form-error" id="i-error" style="text-align:left"></p>
+    </div>
+    <div class="dlg-foot"><button type="button" class="btn" data-close>Cancel</button><button type="button" class="btn primary" id="i-go">Test and connect</button></div></form>`, d => {
+    $('#i-email', d).focus();
+    $('#i-go', d).onclick = async e => {
+      const b = e.currentTarget;
+      b.disabled = true;
+      b.innerHTML = '<span class="spin"></span><span>Testing…</span>';
+      $('#i-error', d).textContent = '';
+      const v = id => ($('#' + id, d) || {}).value || '';
+      try {
+        const r = await api('connect_imap', {provider, name, email: v('i-email'), password: v('i-pass'), login: v('i-login'),
+          imap_host: v('i-ih'), imap_port: v('i-ip'), smtp_host: v('i-sh'), smtp_port: v('i-sp')});
+        closeDialog('ok');
+        await load();
+        toast(r.message);
+      } catch (err) {
+        $('#i-error', d).textContent = err.message;
+        b.disabled = false;
+        b.textContent = 'Test and connect';
+      }
+    };
+  });
+}
 
 async function googleFlow(purpose, seedId, name = '') {
   const d = await api('google_oauth_start', {purpose, seed_id: seedId, name});
@@ -1026,7 +1131,7 @@ async function switchDialog() {
 
 // ------------------------------------------------------------------ start
 
-const GOOGLE_RESULT = {connected: 'Google inbox connected', send_enabled: 'Sending replies is now allowed', filter_added: 'Gmail filter saved', filter_exists: 'That Gmail filter was already in place'};
+const GOOGLE_RESULT = {connected: 'Inbox connected', send_enabled: 'Sending replies is now allowed', filter_added: 'Filter saved in the inbox', filter_exists: 'That filter was already in place'};
 
 async function start(user) {
   const ok = await load();
@@ -1036,7 +1141,7 @@ async function start(user) {
   const result = params.get('google');
   if (result) {
     history.replaceState(null, '', location.pathname + '#/seeds');
-    toast(GOOGLE_RESULT[result] || ('Google connection failed' + (params.get('reason') ? ': ' + params.get('reason') : '')), GOOGLE_RESULT[result] ? 'ok' : 'err');
+    toast(GOOGLE_RESULT[result] || ('Connection failed' + (params.get('reason') ? ': ' + params.get('reason') : '')), GOOGLE_RESULT[result] ? 'ok' : 'err');
   }
   route();
   refreshPlacements(true);

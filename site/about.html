@@ -59,7 +59,7 @@
     <ul>
       <li><b>Single admin.</b> Passwords are hashed with PBKDF2-SHA256 (310,000 rounds). Sessions use random tokens stored as hashes, in an <code>HttpOnly</code>, <code>SameSite=Strict</code> cookie. Login attempts are rate-limited per IP.</li>
       <li><b>Secrets encrypted at rest.</b> SMTP keys, Google refresh tokens, the Gemini key and the OAuth client secret are encrypted with your <code>APP_ENCRYPTION_KEY</code>. API responses never return them.</li>
-      <li><b>Narrow Gmail use.</b> Placement checks read one message’s labels. Nothing is moved, archived, marked or deleted. Filters and replies only happen when you click.</li>
+      <li><b>Narrow mailbox use.</b> Placement checks only look up one message. Moving an email out of spam, marking it important, adding filters and sending replies only happen when you click.</li>
       <li><b>No telemetry.</b> Your instance talks only to your database, your SMTP provider, Google’s Gmail and OAuth endpoints, and Gemini if you enable it.</li>
       <li><b>Not indexed.</b> Dashboard pages send <code>noindex</code> headers and a <code>robots.txt</code> that disallows crawling.</li>
     </ul>
@@ -68,7 +68,7 @@
     <details><summary>Will this get my email into the inbox?</summary><p>No tool can promise that. Mail Mantis shows you where mail lands and gives you a calm way to send real, varied emails and replies. Authentication (SPF, DKIM, DMARC), a reputable SMTP provider, and real recipients who engage matter most.</p></details>
     <details><summary>Does it send or reply automatically?</summary><p>No. Every email and every reply is sent by you pressing Send. Placement checks run automatically while the dashboard is open, and they are read-only.</p></details>
     <details><summary>Can I use it for outreach or newsletters?</summary><p>No. It sends one email at a time to inboxes you own and connect with Google. It has no lists, imports or campaigns.</p></details>
-    <details><summary>Which inboxes are supported?</summary><p>Gmail and Google Workspace seed inboxes, connected with Google sign-in. The sender can be any SMTP provider on ports 587 or 465.</p></details>
+    <details><summary>Which inboxes are supported?</summary><p>Gmail and Google Workspace (Google sign-in), Outlook.com and Microsoft 365 (Microsoft sign-in), and Yahoo, iCloud, AOL or any IMAP inbox with an app password. The sender can be any SMTP provider on ports 587 or 465.</p></details>
     <details><summary>Do I need Gemini?</summary><p>No. You can write the business brief and every email and reply yourself. Gemini only saves time.</p></details>
 
     <h2 id="credits">Credits</h2>

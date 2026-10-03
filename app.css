@@ -524,3 +524,5 @@ button.nav-item { width: 100%; background: transparent; text-align: left; }
 .chart-card .pchart { flex: 1; grid-template-rows: minmax(250px, 1fr) auto; }
 .card-head.col .right .legend { flex-wrap: nowrap; gap: 12px; }
 .hbar span { font: 600 12px var(--font); }
+.placement-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
+.pick label.faint { cursor: not-allowed; }

@@ -20,7 +20,7 @@
 
 <main class="wrap docs">
   <nav class="toc" aria-label="On this page"><b>ON THIS PAGE</b>
-    <a href="#requirements">Requirements</a><a href="#docker">Docker quick start</a><a href="#https">HTTPS on a domain</a><a href="#google">Google sign-in</a>
+    <a href="#requirements">Requirements</a><a href="#docker">Docker quick start</a><a href="#https">HTTPS on a domain</a><a href="#google">Gmail sign-in</a><a href="#microsoft">Outlook sign-in</a><a href="#imap">Yahoo, iCloud, IMAP</a>
     <a href="#sender">Domain sender</a><a href="#gemini">Gemini</a><a href="#vercel">Vercel + Neon</a><a href="#config">Configuration</a><a href="#maintain">Updates & backups</a><a href="#develop">Development</a></nav>
 
   <article class="prose">
@@ -55,7 +55,7 @@ docker compose --profile https up -d</code><button class="copy-btn"></button></p
     <p>This adds Caddy as a reverse proxy, which gets and renews a Let’s Encrypt certificate automatically. Your dashboard is then at <code>https://app.example.com</code>.</p>
     <div class="tip warn"><svg class="i" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></svg><p>Mail Mantis is a single-admin tool. Keep it on its own subdomain, don’t link to it publicly, and use a strong password. Login attempts are rate-limited, and pages are served with <code>noindex</code>.</p></div>
 
-    <h2 id="google">Google sign-in for seed inboxes</h2>
+    <h2 id="google">Gmail and Google Workspace inboxes</h2>
     <p>Seed inboxes connect with Google OAuth, so Mail Mantis never sees their passwords. You create the OAuth client in your own Google Cloud project:</p>
     <ol>
       <li>In <a href="https://console.cloud.google.com/">Google Cloud Console</a>, create a project and enable the <b>Gmail API</b>.</li>
@@ -73,6 +73,37 @@ docker compose --profile https up -d</code><button class="copy-btn"></button></p
       <tr><td><code>gmail.send</code></td><td>Sending replies you wrote or approved, from that inbox.</td></tr>
       <tr><td><code>gmail.settings.basic</code></td><td>Creating “Never send to Spam” and “Mark important” filters, only when you click them.</td></tr>
     </table>
+
+    <h2 id="microsoft">Outlook and Microsoft 365 inboxes</h2>
+    <p>Outlook.com, Hotmail and Microsoft 365 inboxes connect through Microsoft Graph with your own app registration:</p>
+    <ol>
+      <li>In the <a href="https://entra.microsoft.com/">Microsoft Entra admin center</a>, open <b>App registrations → New registration</b>. For supported account types choose <b>Accounts in any organizational directory and personal Microsoft accounts</b>.</li>
+      <li>Add a <b>Web</b> platform redirect URI: the one shown under <b>Settings → Microsoft sign-in</b>, for example <code>https://app.example.com/api/microsoft_oauth_callback</code>.</li>
+      <li>Under <b>Certificates &amp; secrets</b>, create a client secret and copy its <b>value</b>.</li>
+      <li>Under <b>API permissions</b>, add delegated Microsoft Graph permissions: <code>Mail.ReadWrite</code>, <code>Mail.Send</code>, <code>MailboxSettings.ReadWrite</code>, <code>User.Read</code> and <code>offline_access</code>.</li>
+      <li>Paste the Application (client) ID and secret into <b>Settings → Microsoft sign-in</b>, or set <code>MICROSOFT_CLIENT_ID</code> and <code>MICROSOFT_CLIENT_SECRET</code>.</li>
+    </ol>
+    <p>What Outlook supports:</p>
+    <table>
+      <tr><th>Action</th><th>How</th></tr>
+      <tr><td>Placement</td><td>Junk Email folder → Spam; Inbox with Focused or Other.</td></tr>
+      <tr><td>Not spam</td><td>Graph <code>markAsNotJunk</code>: moves the email to the Inbox and unblocks the sender.</td></tr>
+      <tr><td>Mark important</td><td>Sets the email’s importance to high.</td></tr>
+      <tr><td>Always Focused</td><td>A Focused Inbox override for your sender address.</td></tr>
+      <tr><td>Mark important rule</td><td>An inbox rule that marks future mail from your sender as high importance.</td></tr>
+      <tr><td>Replies</td><td>Sent from the inbox in the same conversation.</td></tr>
+    </table>
+    <div class="tip"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg><p>Microsoft Graph has no API for the Safe Senders list, so a “never send to Junk” filter isn’t possible for Outlook. Use <b>Not spam</b> on individual emails instead.</p></div>
+
+    <h2 id="imap">Yahoo, iCloud, AOL and other IMAP inboxes</h2>
+    <p>These connect with an <b>app password</b> over IMAP, and send replies over SMTP. Your normal password won’t work, and two-step verification usually has to be on.</p>
+    <ul>
+      <li><b>Yahoo Mail</b>: Account security → Generate app password. Servers <code>imap.mail.yahoo.com</code> and <code>smtp.mail.yahoo.com</code>. Spam goes to the <b>Bulk</b> folder.</li>
+      <li><b>iCloud Mail</b>: <a href="https://account.apple.com">account.apple.com</a> → Sign-In and Security → App-Specific Passwords. Servers <code>imap.mail.me.com</code> and <code>smtp.mail.me.com</code>.</li>
+      <li><b>AOL Mail</b>: Account security → Generate app password. Servers <code>imap.aol.com</code> and <code>smtp.aol.com</code>.</li>
+      <li><b>Other providers</b>: enter the IMAP and SMTP servers and ports yourself.</li>
+    </ul>
+    <p>Mail Mantis finds the spam folder by its <code>\Junk</code> flag or a name like Spam, Junk or Bulk. <b>Not spam</b> moves the email to INBOX, and <b>Flag as important</b> sets the <code>\Flagged</code> flag (shown as starred or flagged). IMAP has no filter API, so server-side filters aren’t available for these inboxes.</p>
 
     <h2 id="sender">Domain sender</h2>
     <p>Under <b>Domain sender</b>, enter your From name, sender address and SMTP details, then choose <b>Test connection</b>. For Brevo that’s <code>smtp-relay.brevo.com</code>, port <code>587</code>, your SMTP login and SMTP key. Saving tests the connection again.</p>
@@ -100,6 +131,7 @@ python -c "import secrets; print('ADMIN_SETUP_KEY=' + secrets.token_urlsafe(18))
       <tr><td><code>APP_ENCRYPTION_KEY</code></td><td>Vercel</td><td>Fernet key for secrets at rest. Generated automatically with Docker.</td></tr>
       <tr><td><code>ADMIN_SETUP_KEY</code></td><td>Vercel</td><td>One-time key for creating the admin login. Generated automatically with Docker.</td></tr>
       <tr><td><code>GOOGLE_CLIENT_ID</code><br><code>GOOGLE_CLIENT_SECRET</code></td><td>Optional</td><td>OAuth client. Overrides the values saved in Settings.</td></tr>
+      <tr><td><code>MICROSOFT_CLIENT_ID</code><br><code>MICROSOFT_CLIENT_SECRET</code></td><td>Optional</td><td>Microsoft app registration. Overrides the values saved in Settings. <code>MICROSOFT_TENANT</code> defaults to <code>common</code>.</td></tr>
       <tr><td><code>APP_URL</code></td><td>Optional</td><td>Public base URL, if it can’t be worked out from the request.</td></tr>
       <tr><td><code>GOOGLE_REDIRECT_URI</code></td><td>Optional</td><td>Overrides the derived <code>APP_URL/api/google_oauth_callback</code>.</td></tr>
       <tr><td><code>DOMAIN</code>, <code>TRUST_PROXY</code></td><td>HTTPS profile</td><td>Domain for Caddy; trust its forwarded headers.</td></tr>

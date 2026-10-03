@@ -12,7 +12,9 @@ SEEDS = [("Jane", "jane.cooper.mail@gmail.com", "gmail", True, True, False),
          ("Marcus", "marcus.hale@gmail.com", "gmail", True, False, False),
          ("Priya", "priya@northwind-studio.co", "workspace", True, True, True),
          ("Tom", "tom.reyes.inbox@gmail.com", "gmail", False, None, None),
-         ("Elena", "elena.v.mail@gmail.com", "gmail", True, False, False)]
+         ("Elena", "elena.v.mail@gmail.com", "gmail", True, False, False),
+         ("Sam", "sam.taylor.mail@outlook.com", "outlook", True, True, False),
+         ("Riley", "riley.brooks@yahoo.com", "yahoo", True, None, None)]
 EMAILS = [
     ("Your class spot for Saturday", "Hi {n},\n\nJust a note that your place on Saturday's beginners' wheel class is confirmed. We start at 10am and finish around 1pm, with tea halfway through.\n\nWear something you don't mind getting clay on. Aprons are provided.\n\nSee you then,\nFernhill Pottery"),
     ("New speckled mugs are out of the kiln", "Hi {n},\n\nThe latest batch of speckled oatmeal mugs came out of the kiln this week, and they've turned out lovely. There are about thirty, each slightly different.\n\nThey'll be on the shelves at the open day first. Would you like us to keep one aside for you?\n\nFernhill Pottery"),
@@ -51,16 +53,20 @@ def load_demo(app, placements):
                             "google_client_secret_enc": app.seal("demo")}.items():
             cur.execute("INSERT INTO app_settings(name,value) VALUES(%s,%s)", (name, value))
         for i, (name, email, provider, can_send, never_spam, important) in enumerate(SEEDS):
+            auth = {"outlook": "microsoft_oauth", "yahoo": "app_password"}.get(provider, "google_oauth")
             cur.execute("INSERT INTO seed_accounts(id,name,email,provider,password_enc,auth_type,oauth_refresh_enc,gmail_send_enabled,enabled,filter_never_spam,filter_important,filters_checked_at,created_at) "
-                        "VALUES(%s,%s,%s,%s,'','google_oauth',%s,%s,%s,%s,%s,%s,%s)",
-                        (secrets.token_hex(16), name, email, provider, app.seal("demo"), can_send, name != "Tom", never_spam, important,
+                        "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (secrets.token_hex(16), name, email, provider, app.seal("demo") if auth == "app_password" else "", auth,
+                         app.seal("demo") if auth != "app_password" else "", can_send, name != "Tom", never_spam, important,
                          now - timedelta(hours=5) if never_spam is not None else None, now - timedelta(days=14, minutes=i)))
 
         def draft(kind, seed, subject, body, status, created, sent=None, placement="", tab="", parent=""):
             draft_id = secrets.token_hex(16)
             frm, to = (SENDER, seed[1]) if kind == "domain" else (seed[1], SENDER)
             message_id = f"{draft_id[:12]}@fernhillpottery.com" if sent else ""
-            labels = {"Inbox": "INBOX," + ("CATEGORY_" + tab.upper() if tab and tab != "Primary" else "CATEGORY_PERSONAL"), "Spam": "SPAM"}.get(placement, "")
+            inbox_labels = ("INBOX," + tab.upper() if tab in ("Focused", "Other") else "INBOX" if not tab and seed[2] == "yahoo"
+                            else "INBOX," + ("CATEGORY_" + tab.upper() if tab and tab != "Primary" else "CATEGORY_PERSONAL"))
+            labels = {"Inbox": inbox_labels, "Spam": "BULK" if seed[2] == "yahoo" else "JUNK" if seed[2] == "outlook" else "SPAM"}.get(placement, "")
             cur.execute("INSERT INTO qa_drafts(id,kind,parent_id,seed_email,from_email,to_email,subject,body,status,message_id,sent_at,placement,inbox_tab,gmail_labels,checked_at,created_at,updated_at) "
                         "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                         (draft_id, kind, parent, seed[1], frm, to, subject, body, status, message_id, sent, placement, tab,
@@ -79,6 +85,10 @@ def load_demo(app, placements):
                 roll = random.random()
                 placement, tab = ("Spam", "") if (seed[0] == "Marcus" and roll < .35) or roll < .05 else \
                     ("Inbox", "Promotions") if roll < .2 else ("Inbox", "Updates") if roll < .25 else ("Inbox", "Primary")
+                if seed[2] == "outlook" and placement == "Inbox":
+                    tab = "Focused" if tab == "Primary" else "Other"
+                elif seed[2] == "yahoo":
+                    tab = ""
                 parent = draft("domain", seed, subject, body.format(n=seed[0]), "sent", sent - timedelta(minutes=20), sent, placement, tab)
                 if placement == "Inbox" and random.random() < .45:
                     draft("reply", seed, "Re: " + subject, random.choice(REPLIES) + "\n\n" + seed[0], "sent", sent + timedelta(hours=2),
