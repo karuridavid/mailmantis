@@ -283,6 +283,60 @@ call("send_draft", id=im_reply)
 check({d["id"]: d for d in call("get_config")["drafts"]}[im_reply]["status"] == "sent", "imap reply sent over SMTP")
 check(gina["id"] not in call("check_filters")["results"], "imap inboxes skipped by filter checks")
 
+# --- connection checks
+g = call("check_oauth", provider="google")["checks"]
+check(g[1]["detail"] == BASE + "/api/google_oauth_callback", "google check uses the derived redirect URI")
+check(call("check_oauth", provider="microsoft")["checks"][0]["ok"] is True, "microsoft check runs with saved keys")
+call("check_oauth", expect=400, provider="yahoo")
+
+# --- people: invites and member accounts
+inv = call("create_invite", name="Alex", email="alex@gmail.com")
+token = inv["url"].split("#/join/")[1]
+check(inv["url"].startswith(BASE + "/#/join/") and inv["days"] == 7, "invite link created")
+call("create_invite", expect=400, email="admin@x.com")  # already has an account
+pending = call("get_config")["invites"]
+check(len(pending) == 1 and pending[0]["email"] == "alex@gmail.com", "pending invite listed")
+admin_cookie = cookie
+cookie = ""
+check(call("invite_info", token=token)["email"] == "alex@gmail.com", "invite info is public")
+call("invite_info", expect=404, token="nope")
+call("accept_invite", expect=400, token=token, password="short")
+r = call("accept_invite", token=token, email="someone-else@x.com", name="", password="alex-password-123")
+check(r["user"]["role"] == "member" and r["user"]["email"] == "alex@gmail.com" and r["user"]["name"] == "Alex", "member created with the invited email")
+call("accept_invite", expect=404, token=token, password="alex-password-123")  # links work once
+mc = call("get_config")
+check(mc["role"] == "member" and mc["seeds"] == [] and "drafts" not in mc and "senders" not in mc and "people" not in mc, "member sees only their own inboxes")
+for blocked in ("generate_drafts", "save_sender", "create_invite", "connect_imap", "check_placement", "send_draft", "check_oauth", "save_google", "message_action"):
+    call(blocked, expect=403)
+call("remove_seed", expect=400, id=jane["id"])  # someone else's inbox
+call("google_oauth_start", expect=400, purpose="send", seed_id=jane["id"])
+hook("profile", email="alex@gmail.com", scope="openid email https://www.googleapis.com/auth/gmail.modify https://www.googleapis.com/auth/gmail.send")
+check(oauth("connect", name="Alex") == (302, "/?google=connected"), "member connects their Gmail")
+mine = call("get_config")["seeds"]
+check([x["email"] for x in mine] == ["alex@gmail.com"], "member sees the inbox they connected")
+call("rename_seed", id=mine[0]["id"], name="Alex P")
+call("change_password", current_password="alex-password-123", new_password="alex-password-456")
+cookie = ""
+call("login", email="alex@gmail.com", password="alex-password-456")
+check(call("get_config")["seeds"][0]["name"] == "Alex P", "member renames own inbox and changes password")
+member_cookie = cookie
+cookie = admin_cookie
+alex_seed = {x["email"]: x for x in call("get_config")["seeds"]}["alex@gmail.com"]
+check(alex_seed["owner"] == {"email": "alex@gmail.com", "name": "Alex"}, "admin sees who added the inbox")
+alex = [x for x in call("get_config")["people"] if x["email"] == "alex@gmail.com"][0]
+check(alex["inboxes"] == 1 and alex["role"] == "member", "people list counts inboxes")
+inv2 = call("create_invite", name="Sam")
+call("revoke_invite", id=[i for i in call("get_config")["invites"] if i["name"] == "Sam"][0]["id"])
+cookie = ""
+call("invite_info", expect=404, token=inv2["url"].split("#/join/")[1])
+cookie = admin_cookie
+call("remove_person", expect=400, id=call("get_config")["user"]["id"])  # admins aren't removed here
+r = call("remove_person", id=alex["id"])
+check("1 inbox" in r["message"] and "alex@gmail.com" not in [x["email"] for x in call("get_config")["seeds"]], "removing a person disconnects their inboxes")
+cookie = member_cookie
+call("get_config", expect=401)
+cookie = admin_cookie
+
 # --- removed actions are gone
 call("run_check", expect=400)
 call("rotate_cron", expect=400)

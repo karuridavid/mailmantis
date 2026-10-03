@@ -11,7 +11,8 @@ const ui = {
   page: 'overview', sel: null, filter: 'all', authMode: 'login',
   edits: {},      // unsaved draft text, keyed by draft id
   forms: {},      // unsaved form fields, keyed by form name
-  pendingRender: false, pollTimer: null, sidebarOpen: false, domain: null, pendingSources: {}
+  pendingRender: false, pollTimer: null, sidebarOpen: false, domain: null, pendingSources: {},
+  checks: {}, inviteUrl: ''
 };
 
 // ------------------------------------------------------------------ icons
@@ -136,6 +137,7 @@ async function api(action, data = {}) {
 
 // Everything in the dashboard is scoped to the active sender domain.
 function scope(d) {
+  if (!d.drafts) return d;  // Member accounts get only their own inboxes.
   const email = d.sender ? d.sender.email.toLowerCase() : null;
   const domain = d.drafts.filter(x => x.kind === 'domain' && email && x.from_email.toLowerCase() === email);
   const ids = new Set(domain.map(x => x.id));
@@ -195,7 +197,7 @@ async function promptBox({title, text = '', label, value = '', ok = 'Save', plac
 
 // ------------------------------------------------------------------ routing & rendering
 
-const PAGES = {overview: 'Overview', emails: 'Emails', seeds: 'Seed inboxes', domains: 'Domains', log: 'Placement log', settings: 'Settings'};
+const PAGES = {overview: 'Overview', emails: 'Emails', seeds: 'Seed inboxes', domains: 'Domains', people: 'People', log: 'Placement log', settings: 'Settings'};
 
 function route() {
   let [, page, id] = (location.hash || '#/overview').split('/');
@@ -215,13 +217,13 @@ function render(force = true) {
   if (!force && active && root.contains(active) && active.matches('input, textarea, select')) { ui.pendingRender = true; return; }
   ui.pendingRender = false;
   const scroll = {list: $('.mail-list')?.scrollTop, detail: $('.detail')?.scrollTop, win: window.scrollY, key: ui.page + ui.sel};
-  root.innerHTML = shell();
+  root.innerHTML = S.role === 'member' ? memberView() : shell();
   if (scroll.key === ui.page + ui.sel) {
     if ($('.mail-list') && scroll.list) $('.mail-list').scrollTop = scroll.list;
     if ($('.detail') && scroll.detail) $('.detail').scrollTop = scroll.detail;
     window.scrollTo(0, scroll.win);
   }
-  document.title = PAGES[ui.page] + ' · Mail Mantis';
+  document.title = (S.role === 'member' ? 'Your inboxes' : PAGES[ui.page]) + ' · Mail Mantis';
 }
 root.addEventListener('focusout', () => setTimeout(() => {
   if (ui.pendingRender && !(document.activeElement && root.contains(document.activeElement) && document.activeElement.matches('input, textarea, select'))) render(true);
@@ -243,6 +245,7 @@ function shell() {
       ${navItem('emails', 'mail', 'Emails', ready || '')}
       ${navItem('seeds', 'users', 'Seed inboxes')}
       ${navItem('domains', 'globe', 'Domains')}
+      ${navItem('people', 'users', 'People', S.invites.length || '')}
       ${navItem('log', 'activity', 'Placement log')}
       <div class="sidebar-spacer"></div>
       ${navItem('settings', 'settings', 'Settings')}
@@ -251,7 +254,7 @@ function shell() {
         <span class="acc-text"><b>${esc(S.user.email.split('@')[0])}</b><small>${esc(S.user.email)}</small></span>
         <button class="btn ghost sm icon" data-act="logout" title="Sign out" aria-label="Sign out">${icon('logout')}</button></div>
     </aside>
-    <main class="main"><div class="frame">${({overview, emails, seeds, domains, log, settings})[ui.page]()}</div></main>
+    <main class="main"><div class="frame">${({overview, emails, seeds, domains, people, log, settings})[ui.page]()}</div></main>
   </div>`;
 }
 
@@ -541,9 +544,10 @@ function seeds() {
     const kind = seedKind(s);
     const sent = sentEmails().filter(d => d.seed_email === s.email).sort((a, b) => ms(a.sent_at) - ms(b.sent_at));
     const last = sent.slice(-10);
-    const rule = (label, value, act) => `<div class="kv-row"><span class="k">${label}</span>${filterState(value)}${value !== true ? btn(act, 'Add', {cls: 'sm', id: s.id}) : ''}</div>`;
+    const theirs = s.owner ? {disabled: true, title: 'Only ' + (s.owner.name || s.owner.email) + ' can approve this, from their own account'} : {};
+    const rule = (label, value, act) => `<div class="kv-row"><span class="k">${label}</span>${filterState(value)}${value !== true ? btn(act, 'Add', {cls: 'sm', id: s.id, ...theirs}) : ''}</div>`;
     let rows = '';
-    if (kind === 'google') rows = `<div class="kv-row"><span class="k">Send replies</span>${s.gmail_send_enabled ? '<span class="pill s-inbox">Allowed</span>' : btn('allow', 'Allow', {cls: 'sm', id: s.id})}</div>`
+    if (kind === 'google') rows = `<div class="kv-row"><span class="k">Send replies</span>${s.gmail_send_enabled ? '<span class="pill s-inbox">Allowed</span>' : btn('allow', 'Allow', {cls: 'sm', id: s.id, ...theirs})}</div>`
       + rule('Never send to Spam', s.filter_never_spam, 'filter-spam') + rule('Mark important', s.filter_important, 'filter-important');
     else if (kind === 'microsoft') rows = `<div class="kv-row"><span class="k">Send replies</span><span class="pill s-inbox">Allowed</span></div>`
       + rule('Always Focused', s.filter_never_spam, 'filter-spam') + rule('Mark important rule', s.filter_important, 'filter-important');
@@ -551,7 +555,7 @@ function seeds() {
       <div class="kv-row"><span class="k">Filters</span><span class="hint" style="text-align:right">Not available over IMAP. Use Not spam and Flag on each email.</span></div>
       <div class="kv-row"><span class="k">Server</span><span class="mono small muted">${esc(s.imap_host || (S.imap_presets[s.provider] || {}).imap_host || 'imap.gmail.com')}</span></div>`;
     return `<div class="card seed-card ${s.enabled ? '' : 'paused'}">
-      <div class="card-head">${avatar(s.email)}<div class="who"><b>${esc(s.name || s.email.split('@')[0])}</b><span>${esc(s.email)}</span></div>
+      <div class="card-head">${avatar(s.email)}<div class="who"><b>${esc(s.name || s.email.split('@')[0])}</b><span>${esc(s.email)}${s.owner ? ' · added by ' + esc(s.owner.name || s.owner.email) : ''}</span></div>
         <span class="pill plain">${esc(PROVIDERS[s.provider] || s.provider)}</span></div>
       <div class="kv">${rows}
         <div class="kv-row"><span class="k">Recent placement</span><div class="cells">${last.length ? last.map(d => { const x = st(d); return `<a class="cell s-${x.k} ${x.k === 'sent' ? 'wait' : ''}" href="#/emails/${esc(d.id)}" title="${esc(d.subject + ' · ' + x.label)}"></a>`; }).join('') : '<span class="faint small">None yet</span>'}</div></div>
@@ -649,7 +653,8 @@ function settings() {
         ${env ? `<div class="callout" style="margin-top:14px">${icon('key')}<div>Set by environment variables on this server (client <span class="mono">${esc(g.client_id.slice(0, 12))}…</span>).</div></div>`
         : `<div class="field" style="margin-top:14px"><label class="label" for="s-gid">Client ID</label><input class="input mono" id="s-gid" data-form="google" name="client_id" value="${esc(formVal('google', 'client_id', g.client_id))}" placeholder="….apps.googleusercontent.com"></div>
         <div class="field"><label class="label" for="s-gsecret">Client secret</label><input class="input" id="s-gsecret" type="password" autocomplete="new-password" data-form="google" name="client_secret" value="${esc(formVal('google', 'client_secret'))}" placeholder="${g.ready ? 'Saved. Leave blank to keep it' : ''}"></div>
-        <div style="margin-top:14px">${btn('save-google', 'Save', {cls: 'primary'})}</div>`}</div></section>
+        <div style="margin-top:14px">${btn('save-google', 'Save', {cls: 'primary'})}</div>`}
+        ${checkBlock('google', g.ready)}</div></section>
 
     <section class="settings-section"><div><h3>Microsoft sign-in</h3><p>App registration used to connect Outlook.com and Microsoft 365 inboxes. ${S.microsoft.ready ? '<span class="pill s-inbox" style="margin-top:8px">Ready</span>' : '<span class="pill s-tab" style="margin-top:8px">Not set</span>'}</p></div>
       <div><div class="field"><span class="label">Redirect URI (Web platform)</span><div class="copy"><code>${esc(S.microsoft.redirect_uri)}</code>${btn('copy', '', {ico: 'copy', cls: 'sm icon ghost', attrs: `data-v="${esc(S.microsoft.redirect_uri)}"`, title: 'Copy'})}</div>
@@ -657,13 +662,102 @@ function settings() {
         ${S.microsoft.source === 'env' ? `<div class="callout" style="margin-top:14px">${icon('key')}<div>Set by environment variables on this server.</div></div>`
         : `<div class="field" style="margin-top:14px"><label class="label" for="s-mid">Application (client) ID</label><input class="input mono" id="s-mid" data-form="microsoft" name="client_id" value="${esc(formVal('microsoft', 'client_id', S.microsoft.client_id))}" placeholder="00000000-0000-0000-0000-000000000000"></div>
         <div class="field"><label class="label" for="s-msecret">Client secret value</label><input class="input" id="s-msecret" type="password" autocomplete="new-password" data-form="microsoft" name="client_secret" value="${esc(formVal('microsoft', 'client_secret'))}" placeholder="${S.microsoft.ready ? 'Saved. Leave blank to keep it' : ''}"></div>
-        <div style="margin-top:14px">${btn('save-microsoft', 'Save', {cls: 'primary'})}</div>`}</div></section>
+        <div style="margin-top:14px">${btn('save-microsoft', 'Save', {cls: 'primary'})}</div>`}
+        ${checkBlock('microsoft', S.microsoft.ready)}</div></section>
 
     <section class="settings-section"><div><h3>Password</h3><p>Signed in as ${esc(S.user.email)}. Changing it signs you out everywhere.</p></div>
       <div><div class="field-row"><div class="field"><label class="label" for="s-cur">Current password</label><input class="input" id="s-cur" type="password" autocomplete="current-password" data-form="pw" name="current"></div>
         <div class="field"><label class="label" for="s-new">New password</label><input class="input" id="s-new" type="password" autocomplete="new-password" data-form="pw" name="next" placeholder="12+ characters"></div></div>
         <div style="margin-top:14px">${btn('change-password', 'Update password')}</div></div></section>
   </div></div></div>`;
+}
+
+function checkBlock(provider, ready) {
+  const results = ui.checks[provider];
+  const mark = ok => ok === true ? '<span class="check-mark ok">✓</span>' : ok === false ? '<span class="check-mark bad">✕</span>' : '<span class="check-mark">?</span>';
+  return `<div class="check-block">${btn('check-oauth', 'Check connection', {ico: 'refresh', cls: 'sm', attrs: `data-v="${provider}"`, disabled: !ready, title: ready ? '' : 'Save the keys first'})}
+    ${results ? `<div class="check-list">${results.map(r => `<div class="check-row">${mark(r.ok)}<div><b>${esc(r.label)}</b><span>${esc(r.detail)}</span></div></div>`).join('')}</div>` : ''}</div>`;
+}
+
+// ------------------------------------------------------------------ people (admin)
+
+function people() {
+  const members = S.people.filter(x => x.role === 'member');
+  const date = t => new Date(t).toLocaleDateString(undefined, {month: 'short', day: 'numeric', year: 'numeric'});
+  return header('People', 'Invite people to connect their inboxes') + `<div class="page narrow"><div class="stack">
+    <div class="callout">${icon('key')}<div><b>Member accounts can only connect, manage and disconnect their own Gmail or Outlook inboxes.</b> They can’t see emails, domains, results or settings.
+      While your Google app is in Testing mode, add each person’s Gmail address as a test user (Google Auth Platform → Audience), or Google will block their sign-in.</div></div>
+    <div class="card"><div class="card-head"><h2>Invite someone</h2><span class="sub">The link works once and expires after 7 days.</span></div>
+      <div class="card-body"><div class="field-row"><div class="field"><label class="label" for="inv-name">Name</label><input class="input" id="inv-name" data-form="invite" name="name" value="${esc(formVal('invite', 'name'))}" placeholder="Alex" maxlength="100"></div>
+        <div class="field"><label class="label" for="inv-email">Email <span class="faint">(optional, locks the invite to it)</span></label><input class="input" id="inv-email" type="email" data-form="invite" name="email" value="${esc(formVal('invite', 'email'))}" placeholder="alex@gmail.com"></div></div>
+        ${ui.inviteUrl ? `<div class="field" style="margin-top:14px"><span class="label">Invite link</span><div class="copy"><code>${esc(ui.inviteUrl)}</code>${btn('copy', '', {ico: 'copy', cls: 'sm icon ghost', attrs: `data-v="${esc(ui.inviteUrl)}"`, title: 'Copy'})}</div><span class="hint">Send this link to them yourself. Anyone with it can create a member account until it’s used.</span></div>` : ''}</div>
+      <div class="card-foot"><div class="right">${btn('create-invite', 'Create invite link', {cls: 'primary', ico: 'plus'})}</div></div></div>
+    ${S.invites.length ? `<div class="card"><div class="card-head"><h2>Waiting to join</h2></div><table class="table"><tbody>${S.invites.map(i => `<tr><td><b>${esc(i.name || 'Unnamed')}</b><div class="faint small">${esc(i.email || 'Any email')}</div></td><td class="small muted">Expires ${esc(date(i.expires_at))}</td><td style="text-align:right">${btn('revoke-invite', 'Revoke', {cls: 'sm ghost danger', id: i.id})}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    <div class="card"><div class="card-head"><h2>Accounts</h2><span class="sub">${plural(members.length, 'member')}</span></div>
+      <table class="table"><thead><tr><th>Person</th><th>Role</th><th>Inboxes</th><th class="hide-xs">Joined</th><th></th></tr></thead><tbody>${S.people.map(x => `<tr>
+        <td><b>${esc(x.name || x.email.split('@')[0])}</b><div class="faint small">${esc(x.email)}</div></td>
+        <td><span class="pill ${x.role === 'admin' ? 's-ready' : 's-draft'}">${x.role === 'admin' ? 'Admin' : 'Member'}</span></td>
+        <td class="mono">${x.inboxes}</td><td class="small muted hide-xs">${esc(date(x.created_at))}</td>
+        <td style="text-align:right">${x.role === 'member' ? btn('remove-person', 'Remove', {cls: 'sm ghost danger', id: String(x.id)}) : ''}</td></tr>`).join('')}</tbody></table></div>
+  </div></div>`;
+}
+
+// ------------------------------------------------------------------ member view
+
+function memberView() {
+  const name = (S.user.name || S.user.email.split('@')[0]);
+  const from = S.sender ? S.sender.email : 'the test sender';
+  const row = s => {
+    const kind = seedKind(s);
+    const actions = [];
+    if (kind === 'google' && !s.gmail_send_enabled) actions.push(btn('allow', 'Allow replies', {cls: 'sm', id: s.id}));
+    if (S.sender && kind !== 'imap' && s.filter_never_spam !== true) actions.push(btn('filter-spam', kind === 'microsoft' ? 'Always Focused' : 'Never send to Spam', {cls: 'sm ghost', id: s.id}));
+    actions.push(btn('remove-seed', 'Disconnect', {cls: 'sm ghost danger', id: s.id}));
+    return `<div class="member-inbox"><div class="who"><b>${esc(s.email)}</b><span>${esc(PROVIDERS[s.provider] || s.provider)} · connected ${ago(s.created_at, true)}</span></div>
+      <div class="pills">${kind === 'google' && !s.gmail_send_enabled ? '<span class="pill s-tab">Read only</span>' : '<span class="pill s-inbox">Connected</span>'}${s.filter_never_spam ? `<span class="pill s-inbox">${kind === 'microsoft' ? 'Always Focused' : 'Never spam'}</span>` : ''}</div>
+      <div class="row-actions">${actions.join('')}</div></div>`;
+  };
+  return `<div class="member-page">
+    <header class="member-top"><span class="ws-logo">${LOGO}</span><b>Mail Mantis</b><span class="grow"></span><span class="muted small hide-sm">${esc(S.user.email)}</span>${btn('logout', 'Sign out', {cls: 'sm ghost', ico: 'logout'})}</header>
+    <main class="member-main"><h1>Hi ${esc(name)}</h1><p class="lead">Connect the inboxes you’re happy to lend for email tests from <b>${esc(S.sender ? S.sender.domain : 'our domain')}</b>. Thank you!</p>
+      <div class="member-connect">${btn('member-connect', 'Connect Gmail', {cls: 'primary', attrs: 'data-v="google"', disabled: !S.google.ready, title: S.google.ready ? '' : 'Not set up yet'})}${btn('member-connect', 'Connect Outlook', {cls: 'primary', attrs: 'data-v="microsoft"', disabled: !S.microsoft.ready, title: S.microsoft.ready ? '' : 'Not set up yet'})}</div>
+      <div class="card"><div class="card-head"><h2>Your inboxes</h2><span class="sub">${plural(S.seeds.length, 'inbox', 'inboxes')}</span></div>${S.seeds.length ? S.seeds.map(row).join('') : empty('mail', 'No inboxes connected yet', 'Use the buttons above. You’ll choose the account on Google’s or Microsoft’s own sign-in page.')}</div>
+      <div class="card"><div class="card-head"><h2>What this access is used for</h2></div><div class="card-body"><ul class="plain-list">
+        <li>Finding the test emails sent from <b>${esc(from)}</b> to see whether they landed in your inbox or spam. Other mail isn’t read or stored.</li>
+        <li>Sending a short reply to a test email, or moving one out of spam, only when the person running the tests chooses to.</li>
+        <li>You can disconnect here at any time, or remove access in your Google or Microsoft account’s security settings.</li></ul></div></div>
+      <details class="card member-password"><summary>Change password</summary><div class="card-body"><div class="field-row"><div class="field"><label class="label" for="s-cur">Current password</label><input class="input" id="s-cur" type="password" autocomplete="current-password" data-form="pw" name="current"></div>
+        <div class="field"><label class="label" for="s-new">New password</label><input class="input" id="s-new" type="password" autocomplete="new-password" data-form="pw" name="next" placeholder="12+ characters"></div></div>
+        <div style="margin-top:14px">${btn('change-password', 'Update password')}</div></div></details>
+    </main></div>`;
+}
+
+// ------------------------------------------------------------------ join (invite link)
+
+async function renderJoin(token) {
+  let invite;
+  try { invite = await api('invite_info', {token}); }
+  catch (e) { ui.authMode = 'login'; renderAuth(e.message); history.replaceState(null, '', location.pathname); return; }
+  root.innerHTML = `<div class="auth"><div class="auth-card"><div class="logo">${LOGO}</div>
+    <h1>Join Mail Mantis</h1><p>Create your account, then connect the inboxes you’d like to lend for email tests.</p>
+    <form id="auth-form">
+      <div class="field"><label class="label" for="j-name">Your name</label><input class="input" id="j-name" value="${esc(invite.name)}" autocomplete="name" maxlength="100"></div>
+      <div class="field"><label class="label" for="j-email">Email</label><input class="input" id="j-email" type="email" required autocomplete="username" value="${esc(invite.email)}" ${invite.email ? 'readonly' : ''}></div>
+      <div class="field"><label class="label" for="j-pass">Create a password</label><input class="input" id="j-pass" type="password" required minlength="12" autocomplete="new-password" placeholder="12+ characters"></div>
+      <button class="btn primary">Create account</button>
+      <p class="form-error" id="auth-error"></p>
+    </form></div></div>`;
+  $(invite.email ? '#j-pass' : '#j-name').focus();
+  $('#auth-form').onsubmit = async e => {
+    e.preventDefault();
+    const button = $('#auth-form .btn');
+    button.disabled = true;
+    try {
+      const d = await api('accept_invite', {token, name: $('#j-name').value, email: $('#j-email').value, password: $('#j-pass').value});
+      history.replaceState(null, '', location.pathname);
+      await start(d.user);
+    } catch (err) { $('#auth-error').textContent = err.message; button.disabled = false; }
+  };
 }
 
 // ------------------------------------------------------------------ auth view
@@ -700,7 +794,7 @@ function renderAuth(message = '') {
 // ------------------------------------------------------------------ placement polling
 
 async function refreshPlacements(silent = false) {
-  if (silent && !sentEmails().some(waiting)) { schedulePolling(); return; }
+  if (!S || !S.drafts || (silent && !sentEmails().some(waiting))) { schedulePolling(); return; }
   try {
     const r = await api('check_placement');
     await load(!silent);
@@ -710,7 +804,7 @@ async function refreshPlacements(silent = false) {
 }
 function schedulePolling() {
   stopPolling();
-  if (sentEmails().some(d => waiting(d) && Date.now() - ms(d.sent_at) < 20 * 60000))
+  if (S && S.drafts && sentEmails().some(d => waiting(d) && Date.now() - ms(d.sent_at) < 20 * 60000))
     ui.pollTimer = setTimeout(() => document.hidden ? schedulePolling() : refreshPlacements(true), 30000);
 }
 function stopPolling() { clearTimeout(ui.pollTimer); ui.pollTimer = null; }
@@ -832,6 +926,35 @@ const ACTIONS = {
       toast(r.message);
     });
   },
+  async 'check-oauth'(el) {
+    await withBusy(el, async () => {
+      const r = await api('check_oauth', {provider: el.dataset.v});
+      ui.checks[el.dataset.v] = r.checks;
+      render(true);
+    });
+  },
+  async 'create-invite'(el) {
+    await withBusy(el, async () => {
+      const r = await api('create_invite', {name: formVal('invite', 'name'), email: formVal('invite', 'email')});
+      delete ui.forms.invite;
+      ui.inviteUrl = r.url;
+      await load();
+      try { await navigator.clipboard.writeText(r.url); toast('Invite link created and copied'); } catch (e) { toast('Invite link created'); }
+    });
+  },
+  async 'revoke-invite'(el) {
+    if (!await confirmBox({title: 'Revoke this invite?', text: 'The link stops working straight away.', ok: 'Revoke', danger: true})) return;
+    await api('revoke_invite', {id: el.dataset.id});
+    await load();
+  },
+  async 'remove-person'(el) {
+    const p = S.people.find(x => String(x.id) === el.dataset.id);
+    if (!await confirmBox({title: 'Remove ' + (p.name || p.email) + '?', text: `Their account is deleted and the ${plural(p.inboxes, 'inbox', 'inboxes')} they connected are disconnected, including the stored sign-in tokens. Sent email history is kept.`, ok: 'Remove', danger: true})) return;
+    const r = await api('remove_person', {id: p.id});
+    await load();
+    toast(r.message);
+  },
+  async 'member-connect'(el) { await oauthFlow(el.dataset.v, 'connect', '', S.user.name || ''); },
   async 'save-microsoft'(el) {
     await withBusy(el, async () => {
       await api('save_microsoft', {client_id: formVal('microsoft', 'client_id', S.microsoft.client_id), client_secret: formVal('microsoft', 'client_secret')});
@@ -850,7 +973,7 @@ const ACTIONS = {
   async 'toggle-seed'(el) { const s = S.seeds.find(x => x.id === el.dataset.id); await api('set_seed_enabled', {id: s.id, enabled: !s.enabled}); await load(); },
   async 'remove-seed'(el) {
     const s = S.seeds.find(x => x.id === el.dataset.id);
-    if (!await confirmBox({title: 'Remove ' + s.email + '?', text: 'Sent email history is kept. You can connect it again later.', ok: 'Remove', danger: true})) return;
+    if (!await confirmBox({title: (S.role === 'member' ? 'Disconnect ' : 'Remove ') + s.email + '?', text: S.role === 'member' ? 'Mail Mantis deletes its access to this inbox. You can connect it again later.' : 'Sent email history is kept. You can connect it again later.', ok: S.role === 'member' ? 'Disconnect' : 'Remove', danger: true})) return;
     await api('remove_seed', {id: s.id});
     await load();
   },
@@ -1042,7 +1165,7 @@ root.addEventListener('input', e => {
 root.addEventListener('change', e => { const el = e.target; if (el.dataset.form) (ui.forms[el.dataset.form] ||= {})[el.name] = el.value; });
 
 document.addEventListener('keydown', e => {
-  if (!S || dialog.open) return;
+  if (!S || dialog.open || S.role === 'member') return;
   const typing = e.target.matches && e.target.matches('input, textarea, select');
   if (typing) {
     if ((e.metaKey || e.ctrlKey) && e.key === 's' && e.target.dataset.id) { e.preventDefault(); ACTIONS.save({dataset: {id: e.target.dataset.id}}).catch(err => toast(err.message, 'err')); }
@@ -1140,7 +1263,7 @@ async function start(user) {
   const params = new URLSearchParams(location.search);
   const result = params.get('google');
   if (result) {
-    history.replaceState(null, '', location.pathname + '#/seeds');
+    history.replaceState(null, '', location.pathname + (S.role === 'member' ? '' : '#/seeds'));
     toast(GOOGLE_RESULT[result] || ('Connection failed' + (params.get('reason') ? ': ' + params.get('reason') : '')), GOOGLE_RESULT[result] ? 'ok' : 'err');
   }
   route();
@@ -1148,9 +1271,11 @@ async function start(user) {
 }
 
 (async () => {
+  const join = (location.hash.match(/^#\/join\/([\w-]+)/) || [])[1];
   try {
     const status = await api('status');
-    if (status.user) { await start(status.user); return; }
+    if (status.user) { if (join) history.replaceState(null, '', location.pathname); await start(status.user); return; }
+    if (join) { await renderJoin(join); return; }
     ui.authMode = status.setup_required ? 'setup' : 'login';
   } catch (e) {
     ui.authMode = 'login';

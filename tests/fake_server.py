@@ -24,6 +24,7 @@ sys.path.insert(0, str(ROOT))
 import gmail_api  # noqa: E402
 import microsoft_api  # noqa: E402
 import site_reader  # noqa: E402
+import oauth_check  # noqa: E402
 import server  # noqa: E402
 from api import app  # noqa: E402
 
@@ -98,6 +99,8 @@ def ms_create_filter(token, sender, focused=False, important=False):
     MS_FILTERS["never_spam"] |= focused; MS_FILTERS["important"] |= important
     return True
 microsoft_api.create_filter = ms_create_filter
+oauth_check.check_google = lambda cid, secret, uri: [{"label": "Client ID and secret", "ok": True, "detail": cid}, {"label": "Redirect URI", "ok": True, "detail": uri}]
+oauth_check.check_microsoft = lambda cid, secret, uri, tenant="common": [{"label": "Application ID and secret", "ok": secret == "ms-secret", "detail": tenant}]
 gmail_api.not_spam = lambda token, mid: CALLS.append(["gmail_not_spam", mid])
 gmail_api.mark_important = lambda token, mid: CALLS.append(["gmail_important", mid])
 app.smtp_send = fake_smtp_send

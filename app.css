@@ -526,3 +526,32 @@ button.nav-item { width: 100%; background: transparent; text-align: left; }
 .hbar span { font: 600 12px var(--font); }
 .placement-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; }
 .pick label.faint { cursor: not-allowed; }
+
+/* ---------- Connection checks ---------- */
+.check-block { margin-top: 16px; padding-top: 14px; border-top: 1px dashed var(--border); }
+.check-list { display: grid; gap: 10px; margin-top: 12px; }
+.check-row { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 8px; font-size: 13px; }
+.check-row b { display: block; font-weight: 500; }
+.check-row span { color: var(--muted); }
+.check-mark { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--hover); color: var(--muted); font-size: 12px; font-weight: 700; }
+.check-mark.ok { background: color-mix(in srgb, var(--inbox) 16%, transparent); color: var(--inbox); }
+.check-mark.bad { background: color-mix(in srgb, var(--spam) 14%, transparent); color: var(--spam); }
+
+/* ---------- Member accounts ---------- */
+.member-page { min-height: 100vh; background: var(--bg); }
+.member-top { display: flex; align-items: center; gap: 10px; height: 60px; padding: 0 24px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.member-top .grow { flex: 1; }
+.member-main { max-width: 760px; margin: 0 auto; padding: 36px 20px 64px; display: grid; gap: 18px; }
+.member-main h1 { margin: 0; font-size: 26px; font-weight: 600; letter-spacing: -.02em; }
+.member-main .lead { margin: -8px 0 0; color: var(--muted); font-size: 15px; }
+.member-connect { display: flex; flex-wrap: wrap; gap: 10px; }
+.member-connect .btn { height: 40px; padding: 0 18px; }
+.member-inbox { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 14px; align-items: center; padding: 14px 16px; border-top: 1px solid var(--border); }
+.member-inbox .who b, .member-inbox .who span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.member-inbox .who b { font-weight: 500; }
+.member-inbox .who span { color: var(--muted); font-size: 12.5px; }
+.member-inbox .pills { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.member-inbox .row-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; }
+.plain-list { margin: 0; padding-left: 18px; color: var(--text-2); font-size: 13.5px; display: grid; gap: 8px; }
+.member-password summary { padding: 14px 16px; cursor: pointer; font-weight: 500; }
+.row-actions { display: flex; gap: 6px; flex-wrap: wrap; }

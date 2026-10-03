@@ -3,7 +3,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 DATA_DIR=/data PORT=8080
 WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
-COPY server.py gmail_api.py microsoft_api.py imap_box.py site_reader.py index.html app.js app.css robots.txt ./
+COPY server.py gmail_api.py microsoft_api.py imap_box.py site_reader.py oauth_check.py index.html app.js app.css robots.txt ./
 COPY api ./api
 COPY assets ./assets
 RUN useradd --create-home --uid 10001 mailsignal && mkdir -p /data && chown mailsignal /data

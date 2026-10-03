@@ -48,6 +48,10 @@ When you choose, you can also act on a sent email: move it out of spam, or mark 
 | Outlook / Microsoft 365 | Microsoft sign-in | Graph `markAsNotJunk` | High importance | Always Focused, Mark important rule |
 | Yahoo, iCloud, AOL, IMAP | App password | Move to INBOX | `\Flagged` | Not available over IMAP |
 
+## People
+
+Invite people under **People** to lend their inboxes. Member accounts can only connect, manage and disconnect their own Gmail or Outlook inboxes. Settings → **Check connection** validates the Google and Microsoft app keys without signing anyone in.
+
 ## Project layout
 
 | Path | What it is |
@@ -56,6 +60,7 @@ When you choose, you can also act on a sent email: move it out of spam, or mark 
 | `api/app.py` | API: one `POST /api/app` endpoint dispatching on `action`, plus the Google OAuth callback |
 | `gmail_api.py`, `microsoft_api.py`, `imap_box.py` | Mailbox clients for Gmail, Microsoft Graph and IMAP |
 | `site_reader.py` | Reads a business website's text for the Gemini brief |
+| `oauth_check.py` | Validates Google and Microsoft app keys |
 | `server.py` | Standalone server used by Docker; serves the dashboard and API |
 | `site/` | Public project website (static) |
 | `tests/` | Fake-services server, demo data and end-to-end API tests |

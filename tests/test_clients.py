@@ -118,5 +118,48 @@ try:
 except ValueError as exc:
     check("No information found" in str(exc) and "Write the brief yourself" in str(exc), "empty summary explains why")
 
+# ---------------------------------------------------------------- OAuth app checks
+import base64  # noqa: E402
+import oauth_check  # noqa: E402
+
+
+def fake_call(responses):
+    def call(url, form=None):
+        for key, value in responses.items():
+            if key in url:
+                return value(form) if callable(value) else value
+        return 0, {}, ""
+    return call
+
+
+def auth_error(text):
+    return "https://accounts.google.com/signin/oauth/error?authError=" + base64.urlsafe_b64encode(b"\n\x15" + text.encode()).decode().rstrip("=")
+
+
+oauth_check._call = fake_call({"oauth2.googleapis.com": (400, {"error": "invalid_grant"}, ""),
+                               "accounts.google.com": (302, {}, "https://accounts.google.com/v3/signin/identifier?x=1")})
+r = oauth_check.check_google("id", "secret", "https://app.example.com/cb")
+check([x["ok"] for x in r] == [True, True], "google: good keys and registered redirect")
+oauth_check._call = fake_call({"oauth2.googleapis.com": (400, {"error": "invalid_grant"}, ""),
+                               "accounts.google.com": (302, {}, auth_error("redirect_uri_mismatch"))})
+r = oauth_check.check_google("id", "secret", "https://app.example.com/cb")
+check(r[1]["ok"] is False and "https://app.example.com/cb" in r[1]["detail"], "google: redirect URI mismatch reported")
+oauth_check._call = fake_call({"oauth2.googleapis.com": (401, {"error": "invalid_client", "error_description": "Unauthorized"}, "")})
+r = oauth_check.check_google("id", "bad", "https://app.example.com/cb")
+check(r[0]["ok"] is False and r[1]["ok"] is None, "google: bad secret stops the redirect check")
+
+def ms(codes_common, codes_consumers=(9002313,)):
+    return fake_call({"/common/": (400, {"error": "invalid_grant" if not set(codes_common) & {700016, 7000215, 7000222} else "invalid_client", "error_codes": list(codes_common)}, ""),
+                      "/consumers/": (400, {"error": "invalid_grant", "error_codes": list(codes_consumers)}, "")})
+oauth_check._call = ms((70000,))
+r = oauth_check.check_microsoft("id", "secret", "https://app.example.com/cb")
+check([x["ok"] for x in r] == [True, True, None], "microsoft: good keys, personal accounts allowed")
+oauth_check._call = ms((7000215,))
+check("Value" in oauth_check.check_microsoft("id", "bad", "u")[0]["detail"], "microsoft: wrong secret explains Value vs Secret ID")
+oauth_check._call = ms((700016,))
+check(oauth_check.check_microsoft("bad", "s", "u")[0]["ok"] is False, "microsoft: unknown app")
+oauth_check._call = ms((70000,), (700016,))
+check(oauth_check.check_microsoft("id", "s", "u")[1]["ok"] is False, "microsoft: personal accounts not enabled")
+
 print("FAILURES:", failures)
 sys.exit(1 if failures else 0)

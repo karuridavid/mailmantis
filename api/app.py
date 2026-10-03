@@ -29,6 +29,7 @@ from cryptography.fernet import Fernet, InvalidToken
 import gmail_api
 import imap_box
 import microsoft_api
+import oauth_check
 import site_reader
 
 MAX_BODY = 20000
@@ -74,6 +75,8 @@ def schema(conn) -> None:
         return
     statements = (
         "CREATE TABLE IF NOT EXISTS admins (id BIGSERIAL PRIMARY KEY, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
+        "ALTER TABLE admins ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'admin'",
+        "ALTER TABLE admins ADD COLUMN IF NOT EXISTS name TEXT NOT NULL DEFAULT ''",
         "CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, admin_id BIGINT NOT NULL REFERENCES admins(id) ON DELETE CASCADE, expires_at TIMESTAMPTZ NOT NULL)",
         "CREATE TABLE IF NOT EXISTS login_attempts (id BIGSERIAL PRIMARY KEY, ip_hash TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
         "CREATE TABLE IF NOT EXISTS seed_accounts (id TEXT PRIMARY KEY, name TEXT NOT NULL DEFAULT '', email TEXT UNIQUE NOT NULL, provider TEXT NOT NULL, password_enc TEXT NOT NULL, allow_rescue BOOLEAN NOT NULL DEFAULT FALSE, enabled BOOLEAN NOT NULL DEFAULT TRUE, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW())",
@@ -82,6 +85,8 @@ def schema(conn) -> None:
         "ALTER TABLE seed_accounts ADD COLUMN IF NOT EXISTS gmail_send_enabled BOOLEAN NOT NULL DEFAULT FALSE",
         "ALTER TABLE seed_accounts ADD COLUMN IF NOT EXISTS filter_never_spam BOOLEAN",
         "ALTER TABLE seed_accounts ADD COLUMN IF NOT EXISTS login TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE seed_accounts ADD COLUMN IF NOT EXISTS owner_id BIGINT REFERENCES admins(id) ON DELETE SET NULL",
+        "CREATE TABLE IF NOT EXISTS invites (token_hash TEXT PRIMARY KEY, created_by BIGINT NOT NULL REFERENCES admins(id) ON DELETE CASCADE, email TEXT NOT NULL DEFAULT '', name TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), expires_at TIMESTAMPTZ NOT NULL, used_by BIGINT REFERENCES admins(id) ON DELETE SET NULL, used_at TIMESTAMPTZ)",
         "ALTER TABLE seed_accounts ADD COLUMN IF NOT EXISTS imap_host TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE seed_accounts ADD COLUMN IF NOT EXISTS imap_port INTEGER NOT NULL DEFAULT 993",
         "ALTER TABLE seed_accounts ADD COLUMN IF NOT EXISTS smtp_host TEXT NOT NULL DEFAULT ''",
@@ -173,7 +178,7 @@ def public_sender(sender: dict) -> dict:
     return {k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in sender.items() if k != "password_enc"}
 
 
-SEED_COLUMNS = "id,name,email,provider,enabled,auth_type,oauth_refresh_enc,password_enc,gmail_send_enabled,login,imap_host,imap_port,smtp_host,smtp_port"
+SEED_COLUMNS = "id,name,email,provider,enabled,auth_type,oauth_refresh_enc,password_enc,gmail_send_enabled,login,imap_host,imap_port,smtp_host,smtp_port,owner_id"
 
 
 def load_seed(conn, *, seed_id: str = "", email: str = "") -> dict | None:
@@ -249,8 +254,8 @@ def get_session(handler, conn):
     if not raw:
         return None
     digest = hashlib.sha256(raw.encode()).hexdigest()
-    row = one(conn, "SELECT a.id, a.email FROM sessions s JOIN admins a ON a.id=s.admin_id WHERE s.token_hash=%s AND s.expires_at > NOW()", (digest,))
-    return (digest, {"id": row[0], "email": row[1]}) if row else None
+    row = one(conn, "SELECT a.id, a.email, a.role, a.name FROM sessions s JOIN admins a ON a.id=s.admin_id WHERE s.token_hash=%s AND s.expires_at > NOW()", (digest,))
+    return (digest, {"id": row[0], "email": row[1], "role": row[2], "name": row[3]}) if row else None
 
 
 def create_session(conn, admin_id: int) -> str:
@@ -601,13 +606,20 @@ def read_config(conn, user: dict, handler=None) -> dict:
     ms = microsoft_client(conn, handler)
     microsoft_public = {"ready": ms["ready"], "source": ms["source"], "client_id": ms["id"], "redirect_uri": ms["redirect_uri"]}
     with conn.cursor() as cur:
-        cur.execute("SELECT id,name,email,provider,enabled,auth_type,gmail_send_enabled,filter_never_spam,filter_important,filters_checked_at,"
-                    "imap_host,imap_port,smtp_host,smtp_port,login FROM seed_accounts ORDER BY created_at")
+        cur.execute("SELECT s.id,s.name,s.email,s.provider,s.enabled,s.auth_type,s.gmail_send_enabled,s.filter_never_spam,s.filter_important,s.filters_checked_at,"
+                    "s.imap_host,s.imap_port,s.smtp_host,s.smtp_port,s.login,s.owner_id,a.email,a.name,a.role "
+                    "FROM seed_accounts s LEFT JOIN admins a ON a.id=s.owner_id ORDER BY s.created_at")
         seeds = [{"id": r[0], "name": r[1], "email": r[2], "provider": r[3], "enabled": r[4], "auth_type": r[5],
                   "kind": {"google_oauth": "google", "microsoft_oauth": "microsoft"}.get(r[5], "imap"),
                   "gmail_send_enabled": r[6], "filter_never_spam": r[7], "filter_important": r[8],
                   "filters_checked_at": r[9].isoformat() if r[9] else "",
-                  "imap_host": r[10], "imap_port": r[11], "smtp_host": r[12], "smtp_port": r[13], "login": r[14]} for r in cur.fetchall()]
+                  "imap_host": r[10], "imap_port": r[11], "smtp_host": r[12], "smtp_port": r[13], "login": r[14],
+                  "owner_id": r[15], "owner": ({"email": r[16], "name": r[17]} if r[18] == "member" else None)} for r in cur.fetchall()]
+        cur.execute("SELECT a.id,a.email,a.name,a.role,a.created_at,(SELECT COUNT(*) FROM seed_accounts s WHERE s.owner_id=a.id) "
+                    "FROM admins a ORDER BY a.role, a.created_at")
+        people = [{"id": r[0], "email": r[1], "name": r[2], "role": r[3], "created_at": r[4].isoformat(), "inboxes": r[5]} for r in cur.fetchall()]
+        cur.execute("SELECT token_hash,email,name,created_at,expires_at FROM invites WHERE used_at IS NULL AND expires_at > NOW() ORDER BY created_at DESC")
+        invites = [{"id": r[0], "email": r[1], "name": r[2], "created_at": r[3].isoformat(), "expires_at": r[4].isoformat()} for r in cur.fetchall()]
         cur.execute("SELECT id,seed_email,result,tab,duration_ms,message_id,draft_id,created_at FROM activity ORDER BY created_at DESC LIMIT 100")
         activity = [{"id": r[0], "seed_email": r[1], "result": r[2], "tab": r[3], "duration_ms": r[4], "message_id": r[5],
                      "draft_id": r[6], "created_at": r[7].isoformat()} for r in cur.fetchall()]
@@ -626,7 +638,7 @@ def read_config(conn, user: dict, handler=None) -> dict:
             "ai_provider": settings.get("ai_provider", "none"), "ai_model": settings.get("ai_model", ""),
             "has_ai_key": bool(settings.get("ai_key_enc")), "default_model": DEFAULT_MODEL,
             "website_summary": sender["brief"] if sender else "",
-            "storage_ready": True, "google": google_public, "microsoft": microsoft_public,
+            "storage_ready": True, "google": google_public, "microsoft": microsoft_public, "people": people, "invites": invites,
             "imap_presets": {k: {"label": v["label"], "help": v["help"], "imap_host": v["imap_host"], "imap_port": v["imap_port"],
                                  "smtp_host": v["smtp_host"], "smtp_port": v["smtp_port"]} for k, v in imap_box.PRESETS.items()}}
 
@@ -656,7 +668,86 @@ def sender_form(body: dict) -> dict:
 
 
 def act_get_config(conn, body, user, req=None):
-    return read_config(conn, user, req)
+    return read_config(conn, user, req) if user["role"] == "admin" else read_member_config(conn, user, req)
+
+
+def read_member_config(conn, user: dict, handler=None) -> dict:
+    """What a member sees: only the inboxes they connected, and whether Google/Microsoft sign-in is available."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT id,name,email,provider,enabled,auth_type,gmail_send_enabled,filter_never_spam,filter_important,created_at "
+                    "FROM seed_accounts WHERE owner_id=%s ORDER BY created_at", (user["id"],))
+        seeds = [{"id": r[0], "name": r[1], "email": r[2], "provider": r[3], "enabled": r[4], "auth_type": r[5],
+                  "kind": {"google_oauth": "google", "microsoft_oauth": "microsoft"}.get(r[5], "imap"), "gmail_send_enabled": r[6],
+                  "filter_never_spam": r[7], "filter_important": r[8], "created_at": r[9].isoformat()} for r in cur.fetchall()]
+    sender = load_sender(conn)
+    return {"user": user, "seeds": seeds, "role": "member",
+            "sender": {"domain": sender["domain"], "email": sender["email"]} if sender else None,
+            "google": {"ready": google_client(conn, handler)["ready"]}, "microsoft": {"ready": microsoft_client(conn, handler)["ready"]}}
+
+
+# Members may only connect and manage their own Gmail or Outlook inboxes.
+MEMBER_ACTIONS = {"get_config", "google_oauth_start", "microsoft_oauth_start", "remove_seed", "rename_seed", "change_password"}
+
+
+def owned_seed(conn, user: dict, seed_id: str) -> dict:
+    seed = load_seed(conn, seed_id=seed_id)
+    if not seed or (user["role"] != "admin" and seed["owner_id"] != user["id"]):
+        raise ValueError("That inbox isn't connected to your account")
+    return seed
+
+
+def act_check_oauth(conn, body, user, req=None):
+    """Validate the saved Google or Microsoft app settings without signing anyone in."""
+    provider = body.get("provider")
+    if provider == "google":
+        client = google_client(conn, req)
+        if not client["ready"]:
+            raise ValueError("Save the Google client ID and secret first")
+        return {"ok": True, "checks": oauth_check.check_google(client["id"], client["secret"], client["redirect_uri"])}
+    if provider == "microsoft":
+        client = microsoft_client(conn, req)
+        if not client["ready"]:
+            raise ValueError("Save the Microsoft application ID and secret first")
+        return {"ok": True, "checks": oauth_check.check_microsoft(client["id"], client["secret"], client["redirect_uri"], client["tenant"])}
+    raise ValueError("Choose Google or Microsoft")
+
+
+INVITE_DAYS = 7
+
+
+def act_create_invite(conn, body, user, req=None):
+    email = text(body, "email", 254).lower()
+    if email and "@" not in email:
+        raise ValueError("Enter a valid email address, or leave it blank")
+    if email and one(conn, "SELECT 1 FROM admins WHERE email=%s", (email,)):
+        raise ValueError("Someone with that email already has an account")
+    token = secrets.token_urlsafe(24)
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM invites WHERE expires_at < NOW() - INTERVAL '30 days'")
+        cur.execute("INSERT INTO invites(token_hash,created_by,email,name,expires_at) VALUES(%s,%s,%s,%s,NOW() + %s * INTERVAL '1 day')",
+                    (hashlib.sha256(token.encode()).hexdigest(), user["id"], email, " ".join(text(body, "name", 100).split()), INVITE_DAYS))
+    conn.commit()
+    return {"ok": True, "url": public_url(req) + "/#/join/" + token, "days": INVITE_DAYS}
+
+
+def act_revoke_invite(conn, body, user, req=None):
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM invites WHERE token_hash=%s AND used_at IS NULL", (text(body, "id", 64),))
+    conn.commit()
+    return {"ok": True}
+
+
+def act_remove_person(conn, body, user, req=None):
+    """Remove a member's account and the inboxes they connected (their stored tokens go with them)."""
+    person = one(conn, "SELECT id,role FROM admins WHERE id=%s", (body.get("id"),))
+    if not person or person[1] != "member":
+        raise ValueError("Only member accounts can be removed here")
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM seed_accounts WHERE owner_id=%s", (person[0],))
+        removed = cur.rowcount
+        cur.execute("DELETE FROM admins WHERE id=%s", (person[0],))
+    conn.commit()
+    return {"ok": True, "message": f"Access removed and {removed} inbox{'es' if removed != 1 else ''} disconnected"}
 
 
 def act_save_google(conn, body, user, req=None):
@@ -1112,9 +1203,7 @@ def act_microsoft_oauth_start(conn, body, user, req=None):
     seed_id = text(body, "seed_id", 64) if purpose != "connect" else ""
     hint = ""
     if purpose != "connect":
-        seed = load_seed(conn, seed_id=seed_id)
-        if not seed:
-            raise ValueError("Choose a connected inbox first")
+        seed = owned_seed(conn, user, seed_id)
         require_sender(conn)
         hint = seed["email"]
     state = secrets.token_urlsafe(32)
@@ -1165,6 +1254,7 @@ def act_set_seed_enabled(conn, body, user, req=None):
 
 
 def act_rename_seed(conn, body, user, req=None):
+    owned_seed(conn, user, text(body, "id", 64))
     with conn.cursor() as cur:
         cur.execute("UPDATE seed_accounts SET name=%s WHERE id=%s", (" ".join(text(body, "name", 100).split()), text(body, "id", 64)))
     conn.commit()
@@ -1172,6 +1262,7 @@ def act_rename_seed(conn, body, user, req=None):
 
 
 def act_remove_seed(conn, body, user, req=None):
+    owned_seed(conn, user, text(body, "id", 64))
     with conn.cursor() as cur:
         cur.execute("DELETE FROM seed_accounts WHERE id=%s", (text(body, "id", 64),))
     conn.commit()
@@ -1188,9 +1279,7 @@ def act_google_oauth_start(conn, body, user, req=None):
     seed_id = text(body, "seed_id", 64) if purpose != "connect" else ""
     account_hint = ""
     if purpose != "connect":
-        seed = load_seed(conn, seed_id=seed_id)
-        if not seed:
-            raise ValueError("Choose a connected inbox first")
+        seed = owned_seed(conn, user, seed_id)
         if purpose.startswith("filter"):
             require_sender(conn)
         account_hint = seed["email"]
@@ -1239,6 +1328,8 @@ ACTIONS = {
     "remove_seed": act_remove_seed, "google_oauth_start": act_google_oauth_start,
     "microsoft_oauth_start": act_microsoft_oauth_start, "save_microsoft": act_save_microsoft,
     "connect_imap": act_connect_imap, "message_action": act_message_action,
+    "check_oauth": act_check_oauth, "create_invite": act_create_invite, "revoke_invite": act_revoke_invite,
+    "remove_person": act_remove_person,
     "change_password": act_change_password,
 }
 
@@ -1263,7 +1354,7 @@ def google_callback(query: dict, handler) -> str:
         conn.commit()
         if not state_row:
             raise ValueError("Google connection expired. Please try again")
-        _, name, purpose, seed_id = state_row
+        owner_id, name, purpose, seed_id = state_row
         if query.get("error", [""])[0] or not code:
             raise ValueError("Google account connection was cancelled")
         client = google_client(conn, handler)
@@ -1289,12 +1380,12 @@ def google_callback(query: dict, handler) -> str:
                 cur.execute("UPDATE seed_accounts SET oauth_refresh_enc=%s,gmail_send_enabled=gmail_send_enabled OR %s,auth_type='google_oauth' WHERE id=%s",
                             (seal(refresh), can_send, previous["id"]))
             else:
-                cur.execute("INSERT INTO seed_accounts(id,name,email,provider,password_enc,auth_type,oauth_refresh_enc,gmail_send_enabled) "
-                            "VALUES(%s,%s,%s,%s,'','google_oauth',%s,%s) ON CONFLICT(email) DO UPDATE SET name=COALESCE(NULLIF(EXCLUDED.name,''),seed_accounts.name),"
+                cur.execute("INSERT INTO seed_accounts(id,name,email,provider,password_enc,auth_type,oauth_refresh_enc,gmail_send_enabled,owner_id) "
+                            "VALUES(%s,%s,%s,%s,'','google_oauth',%s,%s,%s) ON CONFLICT(email) DO UPDATE SET name=COALESCE(NULLIF(EXCLUDED.name,''),seed_accounts.name),"
                             "password_enc='',enabled=TRUE,auth_type='google_oauth',oauth_refresh_enc=EXCLUDED.oauth_refresh_enc,"
-                            "gmail_send_enabled=seed_accounts.gmail_send_enabled OR EXCLUDED.gmail_send_enabled",
+                            "gmail_send_enabled=seed_accounts.gmail_send_enabled OR EXCLUDED.gmail_send_enabled,owner_id=COALESCE(seed_accounts.owner_id,EXCLUDED.owner_id)",
                             (secrets.token_hex(16), name, account_email,
-                             "gmail" if account_email.endswith("@gmail.com") else "workspace", seal(refresh), can_send))
+                             "gmail" if account_email.endswith("@gmail.com") else "workspace", seal(refresh), can_send, owner_id))
         conn.commit()
         if purpose.startswith("filter"):
             sender = require_sender(conn)
@@ -1328,13 +1419,13 @@ def microsoft_callback(query: dict, handler) -> str:
             raise ValueError("Microsoft connection state is missing")
         state_hash = hashlib.sha256(state.encode()).hexdigest()
         with conn.cursor() as cur:
-            cur.execute("SELECT name,purpose,seed_id FROM google_oauth_states WHERE state_hash=%s AND expires_at>NOW() AND purpose LIKE 'ms_%%'", (state_hash,))
+            cur.execute("SELECT name,purpose,seed_id,admin_id FROM google_oauth_states WHERE state_hash=%s AND expires_at>NOW() AND purpose LIKE 'ms_%%'", (state_hash,))
             row = cur.fetchone()
             cur.execute("DELETE FROM google_oauth_states WHERE state_hash=%s", (state_hash,))
         conn.commit()
         if not row:
             raise ValueError("Microsoft connection expired. Please try again")
-        name, purpose, seed_id = row[0], row[1][3:], row[2]
+        name, purpose, seed_id, owner_id = row[0], row[1][3:], row[2], row[3]
         if query.get("error", [""])[0] or not code:
             raise ValueError("Microsoft account connection was cancelled")
         client = microsoft_client(conn, handler)
@@ -1345,11 +1436,12 @@ def microsoft_callback(query: dict, handler) -> str:
         account_email = microsoft_api.profile_email(access)
         with conn.cursor() as cur:
             if purpose == "connect":
-                cur.execute("INSERT INTO seed_accounts(id,name,email,provider,password_enc,auth_type,oauth_refresh_enc,gmail_send_enabled) "
-                            "VALUES(%s,%s,%s,'outlook','','microsoft_oauth',%s,TRUE) ON CONFLICT(email) DO UPDATE SET "
+                cur.execute("INSERT INTO seed_accounts(id,name,email,provider,password_enc,auth_type,oauth_refresh_enc,gmail_send_enabled,owner_id) "
+                            "VALUES(%s,%s,%s,'outlook','','microsoft_oauth',%s,TRUE,%s) ON CONFLICT(email) DO UPDATE SET "
                             "name=COALESCE(NULLIF(EXCLUDED.name,''),seed_accounts.name),provider='outlook',password_enc='',enabled=TRUE,"
-                            "auth_type='microsoft_oauth',oauth_refresh_enc=EXCLUDED.oauth_refresh_enc,gmail_send_enabled=TRUE",
-                            (secrets.token_hex(16), name, account_email, seal(refresh)))
+                            "auth_type='microsoft_oauth',oauth_refresh_enc=EXCLUDED.oauth_refresh_enc,gmail_send_enabled=TRUE,"
+                            "owner_id=COALESCE(seed_accounts.owner_id,EXCLUDED.owner_id)",
+                            (secrets.token_hex(16), name, account_email, seal(refresh), owner_id))
             else:
                 previous = load_seed(conn, seed_id=seed_id)
                 if not previous:
@@ -1419,7 +1511,7 @@ class handler(BaseHTTPRequestHandler):
             ip = (getattr(self, "client_ip", "") or self.headers.get("x-vercel-forwarded-for")
                   or (self.client_address[0] if self.client_address else "unknown")).split(",", 1)[0].strip()
             rate_key = hmac.new(os.getenv("ADMIN_SETUP_KEY", "mail-monitor").encode(), ip.encode(), hashlib.sha256).hexdigest()
-            if action in ("setup_admin", "login"):
+            if action in ("setup_admin", "login", "accept_invite"):
                 if one(conn, "SELECT COUNT(*) FROM login_attempts WHERE ip_hash=%s AND created_at > NOW() - INTERVAL '15 minutes'", (rate_key,))[0] >= 10:
                     reply(self, 429, {"error": "Too many attempts. Wait 15 minutes and try again."})
                     return
@@ -1445,11 +1537,11 @@ class handler(BaseHTTPRequestHandler):
                     admin_id = cur.fetchone()[0]
                     cur.execute("DELETE FROM login_attempts WHERE ip_hash=%s", (rate_key,))
                 cookie = create_session(conn, admin_id)
-                reply(self, 200, {"user": {"id": admin_id, "email": email}}, cookie=cookie)
+                reply(self, 200, {"user": {"id": admin_id, "email": email, "role": "admin", "name": ""}}, cookie=cookie)
                 return
             if action == "login":
                 email = str(body.get("email", "")).strip().lower()
-                row = one(conn, "SELECT id,email,password_hash FROM admins WHERE email=%s", (email,))
+                row = one(conn, "SELECT id,email,password_hash,role,name FROM admins WHERE email=%s", (email,))
                 if not row or not check_password(str(body.get("password", "")), row[2]):
                     with conn.cursor() as cur:
                         cur.execute("INSERT INTO login_attempts(ip_hash) VALUES(%s)", (rate_key,))
@@ -1459,7 +1551,37 @@ class handler(BaseHTTPRequestHandler):
                 with conn.cursor() as cur:
                     cur.execute("DELETE FROM login_attempts WHERE ip_hash=%s", (rate_key,))
                 cookie = create_session(conn, row[0])
-                reply(self, 200, {"user": {"id": row[0], "email": row[1]}}, cookie=cookie)
+                reply(self, 200, {"user": {"id": row[0], "email": row[1], "role": row[3], "name": row[4]}}, cookie=cookie)
+                return
+            if action in ("invite_info", "accept_invite"):
+                token = str(body.get("token", ""))
+                invite = one(conn, "SELECT token_hash,email,name FROM invites WHERE token_hash=%s AND used_at IS NULL AND expires_at > NOW()",
+                             (hashlib.sha256(token.encode()).hexdigest(),)) if token else None
+                if not invite:
+                    if action == "accept_invite":
+                        with conn.cursor() as cur:
+                            cur.execute("INSERT INTO login_attempts(ip_hash) VALUES(%s)", (rate_key,))
+                        conn.commit()
+                    reply(self, 404, {"error": "This invite link has expired or was already used. Ask for a new one."})
+                    return
+                if action == "invite_info":
+                    reply(self, 200, {"email": invite[1], "name": invite[2]})
+                    return
+                email = invite[1] or str(body.get("email", "")).strip().lower()
+                password = str(body.get("password", ""))
+                name = " ".join(str(body.get("name", "") or invite[2]).split())[:100]
+                if "@" not in email or len(password) < 12:
+                    reply(self, 400, {"error": "Enter a valid email and a password of at least 12 characters"})
+                    return
+                if one(conn, "SELECT 1 FROM admins WHERE email=%s", (email,)):
+                    reply(self, 409, {"error": "An account with this email already exists. Sign in instead."})
+                    return
+                with conn.cursor() as cur:
+                    cur.execute("INSERT INTO admins(email,password_hash,role,name) VALUES(%s,%s,'member',%s) RETURNING id", (email, password_hash(password), name))
+                    member_id = cur.fetchone()[0]
+                    cur.execute("UPDATE invites SET used_at=NOW(), used_by=%s WHERE token_hash=%s", (member_id, invite[0]))
+                cookie = create_session(conn, member_id)
+                reply(self, 200, {"user": {"id": member_id, "email": email, "role": "member", "name": name}}, cookie=cookie)
                 return
             if action == "logout":
                 if session:
@@ -1474,6 +1596,9 @@ class handler(BaseHTTPRequestHandler):
             handler_fn = ACTIONS.get(action)
             if not handler_fn:
                 raise ValueError("Unknown action")
+            if session[1]["role"] != "admin" and action not in MEMBER_ACTIONS:
+                reply(self, 403, {"error": "Your account can only connect and manage your own inboxes"})
+                return
             result = handler_fn(conn, body, session[1], self)
             clear = bool(result.pop("_clear_cookie", False))
             reply(self, 200, result, clear_cookie=clear)
