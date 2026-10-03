@@ -193,3 +193,5 @@ details p { margin: 10px 0 0; }
 .btn.coffee:hover { background: color-mix(in srgb, #ffdd00 30%, var(--surface)); }
 [hidden] { display: none !important; }
 .logo { background: #0b0b0d; }
+
+.logo svg { width: 80%; height: 80%; }

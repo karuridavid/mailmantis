@@ -56,8 +56,8 @@ const ICONS = {
   google: '<path d="M21.8 12.2c0-.7-.1-1.4-.2-2H12v3.8h5.5a4.7 4.7 0 0 1-2 3.1v2.5h3.3c1.9-1.8 3-4.4 3-7.4Z"/><path d="M12 22c2.7 0 5-.9 6.7-2.4l-3.3-2.5c-.9.6-2 1-3.4 1a5.9 5.9 0 0 1-5.5-4.1H3.1v2.6A10 10 0 0 0 12 22Z"/><path d="M6.5 14a6 6 0 0 1 0-3.9V7.5H3.1a10 10 0 0 0 0 9Z"/><path d="M12 5.9c1.5 0 2.8.5 3.9 1.5l2.9-2.9A10 10 0 0 0 3.1 7.5L6.5 10A5.9 5.9 0 0 1 12 5.9Z"/>'
 };
 const icon = (name, cls = '') => `<svg class="i ${cls}" viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ''}</svg>`;
-// Mantis head: a rounded inverted triangle with two eyes.
-const LOGO = '<svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 9.5C5 7 7.4 5.6 9.6 6.6 12 7.7 14 8.2 16 8.2s4-.5 6.4-1.6C24.6 5.6 27 7 27 9.5c0 1-.3 1.9-.8 2.7l-7.6 13.3a3 3 0 0 1-5.2 0L5.8 12.2A5 5 0 0 1 5 9.5Z" fill="#8cc461"/><circle cx="10" cy="10.6" r="2.6" fill="#0b0b0d"/><circle cx="22" cy="10.6" r="2.6" fill="#0b0b0d"/></svg>';
+// Praying mantis in profile: upright thorax, folded raptorial forelegs, leaf-shaped abdomen.
+const LOGO = '<svg viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="#8cc461" stroke-linecap="round" stroke-linejoin="round"><path d="M44.5 10.5 Q49 5.5 54.5 4.5" stroke-width="1.3"/><path d="M42.5 11 Q44.5 5 48.5 2.5" stroke-width="1.3"/><path d="M30.5 38 L39.5 16.5" stroke-width="4.2"/><path d="M36.5 23.5 L47.5 29.5 L45.5 20.5 L47.5 19" stroke-width="3.2"/><path d="M31 39.5 L36 47.5 L40 57" stroke-width="2.1"/><path d="M28.5 40.5 L24.5 49 L27.5 57.5" stroke-width="2.1"/><path d="M26 41 L18 49.5 L13.5 57.5" stroke-width="2.1"/></g><g fill="#8cc461"><path d="M33 36.5 C26.5 34.5 13 38.5 4.5 49.5 C16 50 28 45 33.5 40 Z"/><path d="M35.5 13.5 L47 9.5 L44.5 19.5 Z"/></g><circle cx="44.2" cy="12.3" r="1.7" fill="#0b0b0d"/></svg>';
 
 // ------------------------------------------------------------------ helpers
 
