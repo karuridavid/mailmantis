@@ -12,8 +12,9 @@ const ui = {
   edits: {},      // unsaved draft text, keyed by draft id
   forms: {},      // unsaved form fields, keyed by form name
   pendingRender: false, pollTimer: null, sidebarOpen: false, domain: null, pendingSources: {},
-  checks: {}, inviteUrl: ''
+  checks: {}, inviteUrl: '', ai: ''
 };
+try { ui.ai = localStorage.getItem('mm-ai') || ''; } catch (e) { /* storage blocked */ }
 
 // ------------------------------------------------------------------ icons
 
@@ -75,6 +76,7 @@ function ago(t, long = false) {
     : new Date(t).toLocaleDateString(undefined, {month: 'short', day: 'numeric'});
   return long && out !== 'now' && !/[a-z]{3}/i.test(out) ? out + ' ago' : (long && out === 'now' ? 'just now' : out);
 }
+const shortDate = t => t ? new Date(t).toLocaleString(undefined, {month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'}) : '';
 const fullDate = t => t ? new Date(t).toLocaleString(undefined, {dateStyle: 'medium', timeStyle: 'short'}) : '';
 
 function hue(s) {
@@ -115,10 +117,27 @@ const formVal = (form, name, fallback = '') => (ui.forms[form] && name in ui.for
 const editVal = (d, field) => (ui.edits[d.id] && field in ui.edits[d.id]) ? ui.edits[d.id][field] : (d[field] || '');
 const isDirty = d => !!ui.edits[d.id] && ['subject', 'body'].some(f => f in ui.edits[d.id] && ui.edits[d.id][f] !== (d[f] || ''));
 
-function geminiBlocker() {
+// AI services: the ones with a saved key, plus Chat app (copy the prompt into any chat app, no key needed).
+const aiProviders = () => (S.ai ? S.ai.providers : []);
+const aiReady = () => aiProviders().filter(p => p.ready);
+const aiName = id => id === 'manual' ? 'Chat app' : (aiProviders().find(p => p.id === id) || {}).short || 'AI';
+function aiChoice({manual = true} = {}) {
+  const ready = aiReady().map(p => p.id);
+  if (ui.ai && (ready.includes(ui.ai) || (manual && ui.ai === 'manual'))) return ui.ai;
+  if (ready.includes(S.ai.default)) return S.ai.default;
+  return ready[0] || (manual ? 'manual' : '');
+}
+function aiPicker({manual = true, id = ''} = {}) {
+  const pick = aiChoice({manual});
+  const opts = aiReady().map(p => [p.id, p.short]).concat(manual ? [['manual', 'Chat app']] : []);
+  return `<select class="input ai-pick" data-ai-pick${id ? ` id="${id}"` : ''} aria-label="AI model" title="Which AI writes this">${opts.map(([k, l]) =>
+    `<option value="${k}" ${k === pick ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>`;
+}
+function setAi(v) { ui.ai = v; try { localStorage.setItem('mm-ai', v); } catch (e) { /* storage blocked */ } }
+
+function aiBlocker() {
   if (!S.sender) return 'Connect the domain sender first';
   if (!S.website_summary) return 'Save a business brief first';
-  if (S.ai_provider !== 'gemini' || !S.has_ai_key) return 'Add a Gemini API key in Settings';
   return '';
 }
 
@@ -255,7 +274,7 @@ function shell() {
       <div class="account"><span class="avatar sm" style="--h:${hue(S.user.email)}">${esc(S.user.email.charAt(0).toUpperCase())}</span>
         <span class="acc-text"><b>${esc(S.user.email.split('@')[0])}</b><small>${esc(S.user.email)}</small></span>
         <button class="btn ghost sm icon" data-act="logout" title="Sign out" aria-label="Sign out">${icon('logout')}</button></div>
-    </aside>
+    </aside><div class="scrim"></div>
     <main class="main"><div class="frame">${({overview, emails, seeds, domains, people, log, settings})[ui.page]()}</div></main>
   </div>`;
 }
@@ -292,7 +311,7 @@ function overview() {
   const steps = [
     ['Sender domain', 'Connect and test SMTP', !!(S.sender && S.sender.verified_at), '#/domains'],
     ['Business brief', 'Describe the business', !!S.website_summary, '#/domains'],
-    ['Gemini key', 'For writing drafts', S.ai_provider === 'gemini' && S.has_ai_key, '#/settings'],
+    ['AI model', 'Gemini, Claude or another', aiReady().length > 0, '#/settings'],
     ['Inbox sign-in', 'Google, Microsoft or IMAP', !!(S.google.ready || S.microsoft.ready || S.seeds.some(x => seedKind(x) === 'imap')), '#/settings'],
     ['Seed inbox', 'Connect a Gmail inbox', S.seeds.some(x => x.enabled), '#/seeds'],
     ['First email', 'Draft and send one', sentEmails().length > 0, '#/emails']
@@ -302,7 +321,7 @@ function overview() {
     <div class="setup">${steps.map(([t, sub, ok, href], i) => `<a class="step ${ok ? 'done' : ''}" href="${href}"><span class="n">${ok ? icon('check') : i + 1}</span><b>${t}</b><span>${sub}</span></a>`).join('')}</div></div>`;
 
   return header('Overview', S.sender ? esc(S.sender.domain) : '',
-      btn('refresh', 'Refresh placement', {ico: 'refresh', cls: 'hide-sm'}) + btn('compose', 'Write emails', {ico: 'plus', cls: 'primary'})) +
+      btn('refresh', 'Refresh placement', {ico: 'refresh', cls: 'icon-sm', title: 'Refresh placement'}) + btn('compose', 'Write emails', {ico: 'plus', cls: 'primary'})) +
     `<div class="page"><div class="stack">${setup}
       <div class="kpis">
         ${kpi('Inbox rate', 'inbox', rate === null ? '–' : Math.round(rate) + '%', delta(rate, rateOf(prev), {pct: true}))}
@@ -420,10 +439,10 @@ function emails() {
   const seg = `<div class="seg" role="tablist">${FILTERS.map(([k, label, fn]) =>
     `<button class="${ui.filter === k ? 'on' : ''}" data-act="filter" data-v="${k}" role="tab">${label}<span class="count">${top.filter(fn).length}</span></button>`).join('')}</div>`;
   const rows = list.length ? list.map(row).join('')
-    : empty('inbox', S.drafts.length ? 'Nothing here' : 'No emails yet', S.drafts.length ? 'No emails match this filter.' : 'Gemini writes one ordinary email per seed inbox from your business brief.',
+    : empty('inbox', S.drafts.length ? 'Nothing here' : 'No emails yet', S.drafts.length ? 'No emails match this filter.' : 'AI writes one ordinary email per seed inbox from your business brief.',
         S.drafts.length ? '' : btn('compose', 'Write emails', {ico: 'plus', cls: 'primary sm'}));
   return header('Emails', sentEmails().length + ' sent',
-      btn('refresh', 'Refresh placement', {ico: 'refresh', cls: 'hide-sm'}) + btn('compose', 'Write emails', {ico: 'plus', cls: 'primary'})) +
+      btn('refresh', 'Refresh placement', {ico: 'refresh', cls: 'icon-sm', title: 'Refresh placement'}) + btn('compose', 'Write emails', {ico: 'plus', cls: 'primary'})) +
     `<div class="page flush"><div class="mail-toolbar">${seg}</div>
       <div class="split ${d ? 'has-detail' : ''}"><div class="mail-list" role="list">${rows}</div>
       <section class="detail">${d ? detail(d) : `<div class="detail-inner">${empty('mail', 'Select an email', 'Pick an email from the list to edit, send, check placement or reply. <br><kbd>J</kbd> <kbd>K</kbd> to move, <kbd>N</kbd> for new emails.')}</div>`}</section></div></div>`;
@@ -439,13 +458,14 @@ function row(d) {
 }
 
 function composerBar(d) {
-  const blocker = geminiBlocker();
+  const blocker = aiBlocker();
+  const manual = aiChoice() === 'manual';
   const dirty = isDirty(d);
   const seed = seedOf(d.seed_email);
   const replyBlocked = d.kind === 'reply' && seed && seed.auth_type === 'google_oauth' && !seed.gmail_send_enabled;
   return `<div class="composer">
-    <div class="ai" title="${esc(blocker)}">${icon('sparkles')}<input data-edit="guidance" data-id="${esc(d.id)}" value="${esc(editVal(d, 'guidance'))}" placeholder="${d.kind === 'reply' ? 'Tell Gemini what to say (optional)' : 'Instructions for Gemini (optional)'}" ${blocker ? 'disabled' : ''}>
-      ${btn('gemini', d.body ? 'Rewrite' : 'Write', {cls: 'sm', id: d.id, disabled: !!blocker})}</div>
+    <div class="ai" title="${esc(blocker)}">${icon('sparkles')}<input data-edit="guidance" data-id="${esc(d.id)}" value="${esc(editVal(d, 'guidance'))}" placeholder="${d.kind === 'reply' ? 'What to say (optional)' : 'Instructions (optional)'}" ${blocker ? 'disabled' : ''}>
+      ${aiPicker()}${btn('ai-write', manual ? 'Get prompt' : d.body ? 'Rewrite' : 'Write', {cls: 'sm', id: d.id, disabled: !!blocker, title: manual ? 'Copy a prompt for Claude, ChatGPT or any chat app' : ''})}</div>
     <span class="dirty ${dirty ? '' : 'hidden'}" data-dirty="${esc(d.id)}">Unsaved</span>
     ${btn('save', 'Save', {id: d.id, disabled: !dirty})}
     ${d.status === 'draft' ? btn('ready', 'Mark ready', {cls: 'primary', id: d.id, ico: 'check'})
@@ -466,7 +486,7 @@ function detail(d) {
     ? `From <b>${esc(nameOf(d.from_email))}</b> ${esc(d.from_email)} → ${esc(d.to_email)}`
     : `To <b>${esc(nameOf(d.to_email))}</b> ${esc(d.to_email)} <span class="faint">· from ${esc(d.from_email)}</span>`}</div>`;
   const body = editable(d)
-    ? `<div class="paper"><textarea class="body-input" data-edit="body" data-id="${esc(d.id)}" placeholder="Write the message, or ask Gemini below." maxlength="5000">${esc(editVal(d, 'body'))}</textarea></div>${composerBar(d)}`
+    ? `<div class="paper"><textarea class="body-input" data-edit="body" data-id="${esc(d.id)}" placeholder="Write the message, or have AI write it below." maxlength="5000">${esc(editVal(d, 'body'))}</textarea></div>${composerBar(d)}`
     : `<div class="paper"><pre class="body-text">${esc(d.body)}</pre></div>`;
   let extra = '';
   if (d.kind === 'domain' && d.status === 'sent') extra = placementCard(d) + timeline(d) + repliesSection(d);
@@ -568,7 +588,7 @@ function seeds() {
   }).join('');
   const checked = S.seeds.map(s => s.filters_checked_at).filter(Boolean).sort().pop();
   return header('Seed inboxes', plural(S.seeds.filter(s => s.enabled).length, 'active inbox', 'active inboxes'),
-      btn('check-filters', 'Check filters', {ico: 'shield', cls: 'hide-sm', disabled: !S.sender || !S.seeds.some(s => seedKind(s) !== 'imap')}) +
+      btn('check-filters', 'Check filters', {ico: 'shield', cls: 'icon-sm', title: 'Check filters', disabled: !S.sender || !S.seeds.some(s => seedKind(s) !== 'imap')}) +
       btn('connect', 'Connect inbox', {ico: 'plus', cls: 'primary'})) +
     `<div class="page"><div class="stack">
       ${S.google.ready || S.microsoft.ready ? '' : `<div class="callout">${icon('key')}<div>To connect Gmail or Outlook inboxes with sign-in, add a Google or Microsoft app under <a href="#/settings"><b>Settings</b></a>. Yahoo, iCloud, AOL and other IMAP inboxes only need an app password.</div></div>`}
@@ -585,7 +605,7 @@ function domains() {
   const sel = id === 'new' ? null : list.find(x => x.id === id);
   const items = list.map(x => `<a class="domain-item ${x.id === id ? 'on' : ''}" href="#/domains/${esc(x.id)}"><span class="avatar sm" style="--h:${hue(x.domain)}">${esc(x.domain.charAt(0).toUpperCase())}</span><span><b>${esc(x.domain)}</b><small>${esc(x.email)}</small></span>${x.active ? '<span class="pill s-inbox">Active</span>' : ''}</a>`).join('')
     + `<a class="domain-item add ${id === 'new' ? 'on' : ''}" href="#/domains/new">${icon('plus')}<span><b>Add a domain</b><small>Another sender to warm later</small></span></a>`;
-  return header('Domains', 'One domain is warmed at a time') + `<div class="page"><div class="domains">
+  return header('Domains', 'One domain is warmed at a time', id === 'new' ? '' : `<a class="btn primary" href="#/domains/new">${icon('plus')}<span>Add domain</span></a>`) + `<div class="page"><div class="domains">
     <div><div class="card domain-list">${items}</div>
       <p class="hint" style="margin:10px 4px 0">The active domain is used for drafts, sending and filters, and the dashboard shows its results. Switching keeps each domain’s history.</p></div>
     <div class="stack">${domainEditor(sel)}</div></div></div>`;
@@ -612,9 +632,9 @@ function domainEditor(sd) {
   const bkey = 'brief:' + sd.id;
   const brief = formVal(bkey, 'summary', sd.brief || '');
   const sources = ui.pendingSources[sd.id] || sd.brief_sources || [];
-  const aiBlock = (S.ai_provider !== 'gemini' || !S.has_ai_key) ? 'Add a Gemini key in Settings' : '';
-  return connection + `<div class="card"><div class="card-head"><h2>Business brief</h2><div class="right">${btn('read-site', 'Read website', {ico: 'sparkles', cls: 'sm', id: sd.id, disabled: !!aiBlock, title: aiBlock})}</div></div>
-    <div class="card-body"><p class="muted" style="margin:0 0 12px;font-size:13px">Gemini only uses facts from this brief when it writes for ${esc(sd.domain)}. Read the website, correct anything wrong, then save, or write it yourself.</p>
+  const manual = aiChoice() === 'manual';
+  return connection + `<div class="card"><div class="card-head"><h2>Business brief</h2><div class="right">${aiPicker()}${btn('read-site', manual ? 'Get prompt' : 'Read website', {ico: 'sparkles', cls: 'sm', id: sd.id})}</div></div>
+    <div class="card-body"><p class="muted" style="margin:0 0 12px;font-size:13px">AI only uses facts from this brief when it writes for ${esc(sd.domain)}. Read the website, correct anything wrong, then save, or write it yourself.</p>
       <textarea class="input" data-form="${bkey}" name="summary" rows="8" maxlength="6000" placeholder="What the business does, who it serves, its main products or services, and its tone.">${esc(brief)}</textarea>
       <div class="labels" style="margin-top:10px">${sources.map(u => `<span class="chip">${icon('globe')}&nbsp;${esc(u.replace(/^https?:\/\//, ''))}</span>`).join('')}${sd.brief_updated ? `<span class="faint small" style="align-self:center">Saved ${ago(sd.brief_updated, true)}</span>` : ''}</div></div>
     <div class="card-foot"><span class="hint mono" data-count="${esc(sd.id)}">${brief.length} / 6000</span><div class="right">${btn('save-brief', 'Save brief', {cls: 'primary', id: sd.id})}</div></div></div>`;
@@ -624,13 +644,13 @@ function log() {
   const subjects = Object.fromEntries(S.drafts.map(d => [d.id, d.subject]));
   const rows = S.activity.map(a => {
     const s = st({kind: 'domain', status: 'sent', placement: a.result, inbox_tab: a.tab});
-    return `<tr><td class="mono small" title="${esc(fullDate(a.created_at))}">${esc(fullDate(a.created_at))}</td><td>${esc(nameOf(a.seed_email))}</td>
+    return `<tr><td class="mono small nowrap" title="${esc(fullDate(a.created_at))}">${esc(shortDate(a.created_at))}</td><td>${esc(nameOf(a.seed_email))}</td>
       <td><span class="pill s-${s.k}">${esc(a.result === 'Not found' ? 'Not found' : s.label)}</span></td>
       <td class="clip hide-xs">${a.draft_id && subjects[a.draft_id] ? `<a href="#/emails/${esc(a.draft_id)}">${esc(subjects[a.draft_id])}</a>` : '<span class="faint mono small">' + esc(a.message_id) + '</span>'}</td>
       <td class="mono small faint hide-xs">${a.duration_ms} ms</td></tr>`;
   }).join('');
-  return header('Placement log', 'Read-only checks of Gmail labels', btn('refresh', 'Refresh placement', {ico: 'refresh'})) +
-    `<div class="page"><div class="card">${S.activity.length ? `<table class="table"><thead><tr><th>Checked</th><th>Inbox</th><th>Result</th><th class="hide-xs">Email</th><th class="hide-xs">Took</th></tr></thead><tbody>${rows}</tbody></table>`
+  return header('Placement log', 'Read-only checks of Gmail labels', btn('refresh', 'Refresh placement', {ico: 'refresh', cls: 'icon-sm', title: 'Refresh placement'}) + btn('compose', 'Write emails', {ico: 'plus', cls: 'primary'})) +
+    `<div class="page"><div class="card">${S.activity.length ? `<div class="table-wrap"><table class="table"><thead><tr><th>Checked</th><th>Inbox</th><th>Result</th><th class="hide-xs">Email</th><th class="hide-xs">Took</th></tr></thead><tbody>${rows}</tbody></table></div>`
       : empty('activity', 'No checks yet', 'Every placement check is recorded here. Checks never move messages or change labels.')}</div></div>`;
 }
 
@@ -638,16 +658,13 @@ function settings() {
   const theme = document.documentElement.dataset.theme || 'system';
   const g = S.google;
   const env = g.source === 'env';
-  return header('Settings') + `<div class="page narrow"><div class="card"><div class="card-body" style="padding:24px">
+  return header('Settings') + `<div class="page narrow"><div class="card"><div class="card-body settings-card" style="padding:24px">
     <section class="settings-section"><div><h3>Appearance</h3><p>Follows your system unless you choose.</p></div>
       <div><div class="seg">${[['system', 'monitor', 'System'], ['light', 'sun', 'Light'], ['dark', 'moon', 'Dark']].map(([k, i, l]) =>
         `<button class="${theme === k ? 'on' : ''}" data-act="set-theme" data-v="${k}">${icon(i)}${l}</button>`).join('')}</div></div></section>
 
-    <section class="settings-section"><div><h3>Gemini</h3><p>Writes drafts and reads your website. It never sends anything.</p></div>
-      <div><div class="field-row"><div class="field"><label class="label" for="s-ai">AI service</label><select class="input" id="s-ai" data-form="ai" name="provider">${[['none', 'Off'], ['gemini', 'Google Gemini']].map(([k, l]) => `<option value="${k}" ${formVal('ai', 'provider', S.ai_provider === 'gemini' ? 'gemini' : 'none') === k ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
-        <div class="field"><label class="label" for="s-model">Model</label><input class="input mono" id="s-model" data-form="ai" name="model" value="${esc(formVal('ai', 'model', S.ai_model || ''))}" placeholder="${esc(S.default_model)}"></div></div>
-        <div class="field" style="margin-top:14px"><label class="label" for="s-key">API key</label><input class="input" id="s-key" type="password" autocomplete="new-password" data-form="ai" name="key" value="${esc(formVal('ai', 'key'))}" placeholder="${S.has_ai_key ? 'Saved. Leave blank to keep it' : 'From aistudio.google.com'}"><span class="hint">Encrypted in the database and only sent from the server to Google.</span></div>
-        <div style="margin-top:14px">${btn('save-ai', 'Save', {cls: 'primary'})}</div>${geminiTestBlock()}</div></section>
+    <section class="settings-section"><div><h3>AI writing</h3><p>Writes drafts and reads your website. It never sends anything. Add as many as you like and pick one each time you write.</p></div>
+      <div>${aiSettings()}</div></section>
 
     <section class="settings-section"><div><h3>Google sign-in</h3><p>OAuth client used to connect seed inboxes. ${g.ready ? '<span class="pill s-inbox" style="margin-top:8px">Ready</span>' : '<span class="pill s-tab" style="margin-top:8px">Not set</span>'}</p></div>
       <div><div class="field"><span class="label">Authorized redirect URI</span><div class="copy"><code>${esc(g.redirect_uri)}</code>${btn('copy', '', {ico: 'copy', cls: 'sm icon ghost', attrs: `data-v="${esc(g.redirect_uri)}"`, title: 'Copy'})}</div>
@@ -674,12 +691,80 @@ function settings() {
   </div></div></div>`;
 }
 
-function geminiTestBlock() {
-  const r = ui.checks.gemini;
-  const ready = S.ai_provider === 'gemini' && S.has_ai_key;
-  return `<div class="check-block">${btn('test-gemini', 'Test key', {ico: 'refresh', cls: 'sm', disabled: !ready, title: ready ? '' : 'Save a Gemini key first'})}
-    ${r ? `<div class="check-list"><div class="check-row">${r.works ? '<span class="check-mark ok">✓</span>' : '<span class="check-mark bad">✕</span>'}<div><b>${r.works ? 'Gemini works' : 'Gemini problem'}</b><span>${esc(r.message)}</span></div></div>
-      ${r.suggest ? `<div class="check-row"><span class="check-mark ok">✓</span><div><b>${esc(r.suggest)} works with this key</b><span>Switch to it to keep using Gemini without changing the key.</span><div style="margin-top:8px">${btn('use-model', 'Use ' + esc(r.suggest), {cls: 'sm primary', attrs: `data-v="${esc(r.suggest)}"`})}</div></div></div>` : ''}</div>` : ''}</div>`;
+function aiSettings() {
+  const ready = aiReady();
+  const rows = aiProviders().map(p => {
+    const r = ui.checks['ai:' + p.id];
+    const test = r ? `<div class="check-list"><div class="check-row">${r.works ? '<span class="check-mark ok">✓</span>' : '<span class="check-mark bad">✕</span>'}<div><b>${r.works ? p.short + ' works' : p.short + ' problem'}</b><span>${esc(r.message)}</span></div></div>
+      ${r.suggest ? `<div class="check-row"><span class="check-mark ok">✓</span><div><b>${esc(r.suggest)} works with this key</b><span>Switch to it to keep using ${esc(p.short)} without changing the key.</span><div style="margin-top:8px">${btn('use-model', 'Use ' + esc(r.suggest), {cls: 'sm primary', attrs: `data-v="${esc(r.suggest)}" data-p="${p.id}"`})}</div></div></div>` : ''}</div>` : '';
+    return `<div class="ai-row"><div class="ai-row-main"><div class="ai-row-text"><b>${esc(p.label)}</b> <span class="chip">${p.free ? 'Free tier' : 'Paid'}</span>${S.ai.default === p.id ? ' <span class="pill s-ready">Default</span>' : ''}
+        <span class="hint">${p.ready ? `<span class="mono">${esc(p.model)}</span>` : esc(p.note)}</span></div>
+      <div class="row-actions">${p.ready ? btn('test-ai', 'Test', {cls: 'sm', ico: 'refresh', attrs: `data-v="${p.id}"`}) : ''}${btn('setup-ai', p.ready ? 'Edit' : 'Set up', {cls: p.ready ? 'sm ghost' : 'sm', attrs: `data-v="${p.id}"`})}</div></div>${test}</div>`;
+  }).join('');
+  return `<div class="field"><label class="label" for="s-ai-default">Default for writing</label><select class="input" id="s-ai-default" data-ai-default>${[['none', ready.length ? 'None (ask each time)' : 'None yet']].concat(ready.map(p => [p.id, p.label])).map(([k, l]) =>
+      `<option value="${k}" ${S.ai.default === k ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select></div>
+    <div class="ai-list">${rows}</div>
+    <div class="callout" style="margin-top:14px">${icon('copy')}<div><b>No API key?</b> Pick <b>Chat app</b> when you write. Mail Mantis gives you the prompt to paste into Claude, ChatGPT or any chat app you use (a Claude Pro or ChatGPT Plus plan works), and you paste the answer back.</div></div>`;
+}
+
+function aiSetupDialog(id) {
+  const p = aiProviders().find(x => x.id === id);
+  openDialog(`<form method="dialog">
+    <div class="dlg-head"><h2>${p.ready ? 'Edit' : 'Set up'} ${esc(p.label)}</h2><p>${esc(p.note)} <a class="link" href="${esc(p.key_url)}" target="_blank" rel="noopener">Get an API key</a></p></div>
+    <div class="dlg-body">
+      <div class="field"><label class="label" for="ai-model">Model</label><input class="input mono" id="ai-model" value="${esc(p.model)}" placeholder="${esc(p.default_model)}" autocomplete="off" spellcheck="false">
+        <span class="hint">Leave as ${esc(p.default_model)} unless you want another.${p.id === 'claude' ? ' claude-sonnet-5-5 and claude-haiku-4-5 cost less.' : p.id === 'openrouter' ? ' Any model ID ending in :free costs nothing.' : ''}</span></div>
+      <div class="field"><label class="label" for="ai-key">API key</label><input class="input" id="ai-key" type="password" autocomplete="new-password" placeholder="${p.ready ? 'Saved. Leave blank to keep it' : ''}"><span class="hint">Encrypted in the database and only sent from the server to ${esc(p.short)}.</span></div>
+      <label class="check-line"><input type="checkbox" class="checkbox" id="ai-default" ${S.ai.default === p.id || S.ai.default === 'none' ? 'checked' : ''}> Use it by default</label>
+      <p class="form-error" id="ai-error" style="text-align:left"></p></div>
+    <div class="dlg-foot">${p.ready ? '<button type="button" class="btn ghost danger" id="ai-remove" style="margin-right:auto">Remove</button>' : ''}<button type="button" class="btn" data-close>Cancel</button><button type="button" class="btn primary" id="ai-save">Save</button></div></form>`, d => {
+    $(p.ready ? '#ai-model' : '#ai-key', d).focus();
+    $('#ai-save', d).onclick = async e => {
+      const b = e.currentTarget;
+      b.disabled = true;
+      try {
+        await api('save_ai', {provider: p.id, model: $('#ai-model', d).value, key: $('#ai-key', d).value, make_default: $('#ai-default', d).checked});
+        delete ui.checks['ai:' + p.id];
+        closeDialog('ok');
+        await load();
+        toast(p.label + ' saved');
+      } catch (err) { $('#ai-error', d).textContent = err.message; b.disabled = false; }
+    };
+    if (p.ready) $('#ai-remove', d).onclick = async () => {
+      try { const r = await api('remove_ai', {provider: p.id}); closeDialog('ok'); delete ui.checks['ai:' + p.id]; await load(); toast(r.message); }
+      catch (err) { $('#ai-error', d).textContent = err.message; }
+    };
+  });
+}
+
+// Chat app: write with any chat app (Claude, ChatGPT...) and paste the answer back. Nothing is saved until you save.
+async function manualDialog({task, id, guidance = '', apply}) {
+  const r = await api('ai_prompt', {task, id, guidance});
+  const copy = async () => { try { await navigator.clipboard.writeText(r.prompt); toast('Prompt copied'); return true; } catch (e) { toast('Copy failed. Select the prompt instead', 'err'); return false; } };
+  const what = task === 'brief' ? 'brief' : task === 'reply' ? 'reply' : 'email';
+  openDialog(`<form method="dialog">
+    <div class="dlg-head"><h2>Write the ${what} in a chat app</h2><p>Copy this prompt into Claude, ChatGPT or any chat app, then paste its answer below.${task === 'brief' && !r.fetched ? ' Our server couldn’t read the website, so use a chat app that can browse.' : ''}</p></div>
+    <div class="dlg-body">
+      <textarea class="input mono prompt-box" id="m-prompt" rows="5" readonly>${esc(r.prompt)}</textarea>
+      <div class="row-actions" style="margin-top:8px"><button type="button" class="btn sm" data-open="https://claude.ai/new">${icon('copy')}<span>Copy and open Claude</span></button><button type="button" class="btn sm" data-open="https://chatgpt.com/">${icon('copy')}<span>Copy and open ChatGPT</span></button><button type="button" class="btn sm ghost" id="m-copy">Copy only</button></div>
+      <div class="field" style="margin-top:16px"><label class="label" for="m-answer">Paste the answer</label><textarea class="input" id="m-answer" rows="7" placeholder="${task === 'email' ? 'Subject: …\n\nHi …' : 'Paste the text here'}"></textarea></div>
+      <p class="form-error" id="m-error" style="text-align:left"></p></div>
+    <div class="dlg-foot"><button type="button" class="btn" data-close>Cancel</button><button type="button" class="btn primary" id="m-use">Use this text</button></div></form>`, d => {
+    $('#m-copy', d).onclick = copy;
+    d.querySelectorAll('[data-open]').forEach(b => { b.onclick = async () => { const w = window.open('about:blank', '_blank'); await copy(); if (w) w.location = b.dataset.open; }; });
+    $('#m-use', d).onclick = () => {
+      const text = $('#m-answer', d).value.trim();
+      if (!text) { $('#m-error', d).textContent = 'Paste the answer first'; return; }
+      closeDialog('ok');
+      apply(text);
+    };
+  });
+}
+
+// "Subject: …" on the first line, then the body. Chat apps sometimes bold the label.
+function splitEmail(text) {
+  const m = text.match(/^\s*\**\s*subject\s*:?\s*\**\s*:?\s*(.+)\n+([\s\S]*)$/i);
+  return m ? {subject: m[1].replace(/\*+$/, '').trim(), body: m[2].trim()} : {subject: '', body: text};
 }
 
 function checkBlock(provider, ready) {
@@ -694,7 +779,7 @@ function checkBlock(provider, ready) {
 function people() {
   const members = S.people.filter(x => x.role === 'member');
   const date = t => new Date(t).toLocaleDateString(undefined, {month: 'short', day: 'numeric', year: 'numeric'});
-  return header('People', 'Invite people to connect their inboxes') + `<div class="page narrow"><div class="stack">
+  return header('People', 'Invite people to connect their inboxes', btn('focus-invite', 'Invite', {ico: 'plus', cls: 'primary'})) + `<div class="page narrow"><div class="stack">
     <div class="callout">${icon('key')}<div><b>Member accounts can only connect, manage and disconnect their own Gmail or Outlook inboxes.</b> They can’t see emails, domains, results or settings.
       While your Google app is in Testing mode, add each person’s Gmail address as a test user (Google Auth Platform → Audience), or Google will block their sign-in.</div></div>
     <div class="card"><div class="card-head"><h2>Invite someone</h2><span class="sub">The link works once and expires after 7 days.</span></div>
@@ -702,13 +787,13 @@ function people() {
         <div class="field"><label class="label" for="inv-email">Email <span class="faint">(optional, locks the invite to it)</span></label><input class="input" id="inv-email" type="email" data-form="invite" name="email" value="${esc(formVal('invite', 'email'))}" placeholder="alex@gmail.com"></div></div>
         ${ui.inviteUrl ? `<div class="field" style="margin-top:14px"><span class="label">Invite link</span><div class="copy"><code>${esc(ui.inviteUrl)}</code>${btn('copy', '', {ico: 'copy', cls: 'sm icon ghost', attrs: `data-v="${esc(ui.inviteUrl)}"`, title: 'Copy'})}</div><span class="hint">Send this link to them yourself. Anyone with it can create a member account until it’s used.</span></div>` : ''}</div>
       <div class="card-foot"><div class="right">${btn('create-invite', 'Create invite link', {cls: 'primary', ico: 'plus'})}</div></div></div>
-    ${S.invites.length ? `<div class="card"><div class="card-head"><h2>Waiting to join</h2></div><table class="table"><tbody>${S.invites.map(i => `<tr><td><b>${esc(i.name || 'Unnamed')}</b><div class="faint small">${esc(i.email || 'Any email')}</div></td><td class="small muted">Expires ${esc(date(i.expires_at))}</td><td style="text-align:right">${btn('show-invite', '', {ico: 'link', cls: 'sm icon ghost', id: i.id, title: 'Show invite link'})}${btn('revoke-invite', 'Revoke', {cls: 'sm ghost danger', id: i.id})}</td></tr>`).join('')}</tbody></table></div>` : ''}
+    ${S.invites.length ? `<div class="card"><div class="card-head"><h2>Waiting to join</h2></div><div class="table-wrap"><table class="table"><tbody>${S.invites.map(i => `<tr><td><b>${esc(i.name || 'Unnamed')}</b><div class="faint small">${esc(i.email || 'Any email')}</div></td><td class="small muted hide-xs">Expires ${esc(date(i.expires_at))}</td><td class="nowrap" style="text-align:right">${btn('show-invite', '', {ico: 'link', cls: 'sm icon ghost', id: i.id, title: 'Show invite link'})}${btn('revoke-invite', 'Revoke', {cls: 'sm ghost danger', id: i.id})}</td></tr>`).join('')}</tbody></table></div></div>` : ''}
     <div class="card"><div class="card-head"><h2>Accounts</h2><span class="sub">${plural(members.length, 'member')}</span></div>
-      <table class="table"><thead><tr><th>Person</th><th>Role</th><th>Inboxes</th><th class="hide-xs">Joined</th><th></th></tr></thead><tbody>${S.people.map(x => `<tr>
+      <div class="table-wrap"><table class="table"><thead><tr><th>Person</th><th>Role</th><th>Inboxes</th><th class="hide-xs">Joined</th><th></th></tr></thead><tbody>${S.people.map(x => `<tr>
         <td><b>${esc(x.name || x.email.split('@')[0])}</b><div class="faint small">${esc(x.email)}</div></td>
         <td><span class="pill ${x.role === 'admin' ? 's-ready' : 's-draft'}">${x.role === 'admin' ? 'Admin' : 'Member'}</span></td>
         <td class="mono">${x.inboxes}</td><td class="small muted hide-xs">${esc(date(x.created_at))}</td>
-        <td style="text-align:right">${x.role === 'member' ? btn('remove-person', 'Remove', {cls: 'sm ghost danger', id: String(x.id)}) : ''}</td></tr>`).join('')}</tbody></table></div>
+        <td style="text-align:right">${x.role === 'member' ? btn('remove-person', 'Remove', {cls: 'sm ghost danger', id: String(x.id)}) : ''}</td></tr>`).join('')}</tbody></table></div></div>
   </div></div>`;
 }
 
@@ -897,6 +982,7 @@ const ACTIONS = {
   async copy(el) { try { await navigator.clipboard.writeText(el.dataset.v); toast('Copied'); } catch (e) { toast('Copy failed. Select the text instead', 'err'); } },
 
   compose() { composeDialog(); },
+  'focus-invite'() { const i = $('#inv-name'); if (i) { i.scrollIntoView({block: 'center'}); i.focus({preventScroll: true}); } },
   async save(el) { await withBusy(el, async () => { await saveEdits(el.dataset.id); await load(); toast('Saved. Not sent.'); }); },
   async ready(el) {
     await withBusy(el, async () => { await saveEdits(el.dataset.id); await api('set_draft_status', {id: el.dataset.id, status: 'ready'}); await load(); });
@@ -922,14 +1008,24 @@ const ACTIONS = {
       if (d.kind === 'domain') { setTimeout(() => refreshPlacements(true), 15000); schedulePolling(); }
     });
   },
-  async gemini(el) {
+  async 'ai-write'(el) {
     const d = S.drafts.find(x => x.id === el.dataset.id);
-    if ((editVal(d, 'body') || '').trim() && !await confirmBox({title: 'Replace this text?', text: 'Gemini will write a new version. Your current text will be replaced.', ok: 'Rewrite'})) return;
+    const provider = aiChoice();
+    if (provider === 'manual') {
+      return withBusy(el, () => manualDialog({task: d.kind === 'reply' ? 'reply' : 'email', id: d.id, guidance: editVal(d, 'guidance'), apply: text => {
+        const e = ui.edits[d.id] ||= {};
+        if (d.kind === 'reply') e.body = text;
+        else { const m = splitEmail(text); e.body = m.body; if (m.subject) e.subject = m.subject; }
+        render(true);
+        toast('Pasted in. Review it, then save.');
+      }}));
+    }
+    if ((editVal(d, 'body') || '').trim() && !await confirmBox({title: 'Replace this text?', text: aiName(provider) + ' will write a new version. Your current text will be replaced.', ok: 'Rewrite'})) return;
     await withBusy(el, async () => {
-      await api('write_with_gemini', {id: d.id, guidance: editVal(d, 'guidance')});
-      delete ui.edits[d.id];
+      await api('write_with_ai', {id: d.id, guidance: editVal(d, 'guidance'), provider});
+      if (ui.edits[d.id]) { delete ui.edits[d.id].body; delete ui.edits[d.id].subject; }
       await load();
-      toast('Gemini draft added. Review it before sending.');
+      toast(aiName(provider) + ' draft added. Review it before sending.');
     });
   },
   async check(el) {
@@ -978,19 +1074,20 @@ const ACTIONS = {
     render(true);
     if (prompt) { prompt.prompt(); await prompt.userChoice; }
   },
-  async 'test-gemini'(el) {
+  async 'test-ai'(el) {
     await withBusy(el, async () => {
-      ui.checks.gemini = await api('test_gemini');
+      ui.checks['ai:' + el.dataset.v] = await api('test_ai', {provider: el.dataset.v});
       render(true);
     });
   },
+  'setup-ai'(el) { aiSetupDialog(el.dataset.v); },
   async 'use-model'(el) {
+    const p = el.dataset.p || 'gemini';
     await withBusy(el, async () => {
-      await api('save_ai', {provider: 'gemini', model: el.dataset.v, key: ''});
-      delete ui.forms.ai;
-      ui.checks.gemini = {works: true, message: 'Now using ' + el.dataset.v + '.'};
+      await api('save_ai', {provider: p, model: el.dataset.v, key: '', make_default: S.ai.default === p});
+      ui.checks['ai:' + p] = {works: true, message: 'Now using ' + el.dataset.v + '.'};
       await load();
-      toast('Gemini model changed to ' + el.dataset.v);
+      toast(aiName(p) + ' model changed to ' + el.dataset.v);
     });
   },
   async 'check-oauth'(el) {
@@ -1037,7 +1134,7 @@ const ACTIONS = {
   },
   async rename(el) {
     const s = S.seeds.find(x => x.id === el.dataset.id);
-    const name = await promptBox({title: 'Rename inbox', text: 'Gemini uses this first name in greetings.', label: 'First name', value: s.name || '', placeholder: 'Jane'});
+    const name = await promptBox({title: 'Rename inbox', text: 'AI drafts use this first name in greetings.', label: 'First name', value: s.name || '', placeholder: 'Jane'});
     if (name === null) return;
     await api('rename_seed', {id: s.id, name});
     await load();
@@ -1091,13 +1188,22 @@ const ACTIONS = {
   },
   async 'read-site'(el) {
     const sd = S.senders.find(x => x.id === el.dataset.id);
-    if ((formVal('brief:' + sd.id, 'summary', sd.brief || '')).trim() && !await confirmBox({title: 'Replace the brief?', text: 'Gemini will read ' + sd.domain + ' and replace the text in the box. Nothing is saved until you choose Save brief.', ok: 'Read website'})) return;
+    const provider = aiChoice();
+    if (provider === 'manual') {
+      return withBusy(el, () => manualDialog({task: 'brief', id: sd.id, apply: text => {
+        ui.forms['brief:' + sd.id] = {summary: text.slice(0, 6000)};
+        ui.pendingSources[sd.id] = [];
+        render(true);
+        toast('Brief pasted in. Review it, then save.');
+      }}));
+    }
+    if ((formVal('brief:' + sd.id, 'summary', sd.brief || '')).trim() && !await confirmBox({title: 'Replace the brief?', text: aiName(provider) + ' will read ' + sd.domain + ' and replace the text in the box. Nothing is saved until you choose Save brief.', ok: 'Read website'})) return;
     await withBusy(el, async () => {
-      const r = await api('analyze_website', {id: sd.id});
+      const r = await api('analyze_website', {id: sd.id, provider});
       ui.forms['brief:' + sd.id] = {summary: r.summary};
       ui.pendingSources[sd.id] = r.sources;
       render(true);
-      toast(r.sources.length ? 'Summary ready. Review and correct it, then save.' : 'Gemini could not confirm which pages it read. Check the summary carefully.');
+      toast(r.sources.length ? 'Summary ready. Review and correct it, then save.' : aiName(provider) + ' could not confirm which pages it read. Check the summary carefully.');
     });
   },
   async 'save-brief'(el) {
@@ -1108,14 +1214,6 @@ const ACTIONS = {
       delete ui.pendingSources[sd.id];
       await load();
       toast(r.message);
-    });
-  },
-  async 'save-ai'(el) {
-    await withBusy(el, async () => {
-      await api('save_ai', {provider: formVal('ai', 'provider', S.ai_provider === 'gemini' ? 'gemini' : 'none'), model: formVal('ai', 'model', S.ai_model || ''), key: formVal('ai', 'key')});
-      delete ui.forms.ai;
-      await load();
-      toast('Gemini settings saved');
     });
   },
   async 'save-google'(el) {
@@ -1234,7 +1332,20 @@ root.addEventListener('input', e => {
     }
   }
 });
-root.addEventListener('change', e => { const el = e.target; if (el.dataset.form) (ui.forms[el.dataset.form] ||= {})[el.name] = el.value; });
+root.addEventListener('change', async e => {
+  const el = e.target;
+  if (el.dataset.form) (ui.forms[el.dataset.form] ||= {})[el.name] = el.value;
+  if ('aiPick' in el.dataset) { setAi(el.value); el.blur(); render(true); }
+  if ('aiDefault' in el.dataset) {
+    const p = aiProviders().find(x => x.id === el.value);
+    try {
+      await api('save_ai', p ? {provider: p.id, model: p.model, key: ''} : {provider: 'none'});
+      if (p) setAi(p.id);
+      await load();
+      toast(p ? p.label + ' is now the default' : 'No default AI');
+    } catch (err) { toast(err.message, 'err'); }
+  }
+});
 
 document.addEventListener('keydown', e => {
   if (!S || dialog.open || S.role === 'member') return;
@@ -1261,23 +1372,24 @@ document.addEventListener('keydown', e => {
 
 async function composeDialog() {
   const enabled = S.seeds.filter(s => s.enabled);
-  const blocker = geminiBlocker();
+  const blocker = aiBlocker() || (aiReady().length ? '' : 'Add an AI key in Settings to write several at once');
   if (!S.sender) { toast('Add a sender domain first', 'err'); go('#/domains/new'); return; }
   if (!enabled.length) { toast('Connect a seed inbox first', 'err'); go('#/seeds'); return; }
   const lastResult = email => { const d = sentEmails().filter(x => x.seed_email === email).sort((a, b) => ms(b.sent_at) - ms(a.sent_at))[0]; return d ? pill(d) : ''; };
   openDialog(`<form method="dialog" id="compose">
-    <div class="dlg-head"><h2>Write emails from ${esc(S.sender.domain)}</h2><p>Gemini writes a different, ordinary email for each inbox you pick, using the ${esc(S.sender.domain)} brief. Nothing is sent until you review it and press Send.</p></div>
+    <div class="dlg-head"><h2>Write emails from ${esc(S.sender.domain)}</h2><p>AI writes a different, ordinary email for each inbox you pick, using the ${esc(S.sender.domain)} brief. Nothing is sent until you review it and press Send.</p></div>
     <div class="dlg-body">
       <div class="field"><div style="display:flex;align-items:center"><span class="label">Seed inboxes</span><button type="button" class="btn ghost sm" style="margin-left:auto" id="pick-all">Select all</button></div>
         <div class="pick">${enabled.map(s => `<label><input type="checkbox" class="checkbox" value="${esc(s.id)}" checked>${avatar(s.email, 'sm')}<div>${esc(s.name || s.email.split('@')[0])}<span>${esc(s.email)}</span></div>${lastResult(s.email)}</label>`).join('')}</div></div>
+      ${aiReady().length ? `<div class="field"><label class="label" for="c-ai">Write with</label>${aiPicker({manual: false, id: 'c-ai'})}</div>` : ''}
       <div class="field"><label class="label" for="c-theme">Theme or instructions <span class="faint">(optional)</span></label><textarea class="input" id="c-theme" rows="3" maxlength="500" placeholder="e.g. autumn opening hours, a thank-you after a recent order, ask for feedback"></textarea></div>
-      ${blocker ? `<div class="callout warn" style="margin-top:14px">${icon('alert')}<div>${esc(blocker)}. You can still create blank drafts.</div></div>` : ''}
+      ${blocker ? `<div class="callout warn" style="margin-top:14px">${icon('alert')}<div>${esc(blocker)}. You can still create blank drafts${aiBlocker() ? '' : ' and write each one with Chat app'}.</div></div>` : ''}
       <p class="form-error" id="c-error" style="text-align:left"></p>
     </div>
     <div class="dlg-foot"><button type="button" class="btn" data-close>Cancel</button><button type="button" class="btn" id="c-blank">Blank drafts</button>
-      <button type="button" class="btn primary" id="c-go" ${blocker ? 'disabled' : ''}>${icon('sparkles')}<span>Write with Gemini</span></button></div></form>`, d => {
+      <button type="button" class="btn primary" id="c-go" ${blocker ? 'disabled' : ''}>${icon('sparkles')}<span>Write with AI</span></button></div></form>`, d => {
     const picked = () => [...d.querySelectorAll('.pick input:checked')].map(i => i.value);
-    const update = () => { const n = picked().length; $('#c-go span', d).textContent = n ? `Write ${plural(n, 'email')}` : 'Write with Gemini'; $('#c-go', d).disabled = !!blocker || !n; $('#c-blank', d).disabled = !n; };
+    const update = () => { const n = picked().length; $('#c-go span', d).textContent = n ? `Write ${plural(n, 'email')}` : 'Write with AI'; $('#c-go', d).disabled = !!blocker || !n; $('#c-blank', d).disabled = !n; };
     d.querySelector('.pick').addEventListener('change', update);
     $('#pick-all', d).onclick = () => { const all = d.querySelectorAll('.pick input'); const on = [...all].some(i => !i.checked); all.forEach(i => { i.checked = on; }); update(); };
     const run = async (btnEl, fn) => {
@@ -1287,7 +1399,9 @@ async function composeDialog() {
       try { await fn(); } catch (err) { $('#c-error', d).textContent = err.message; btnEl.innerHTML = btnEl.id === 'c-go' ? icon('sparkles') + '<span>Try again</span>' : '<span>Blank drafts</span>'; d.querySelectorAll('.dlg-foot .btn').forEach(b => { b.disabled = false; }); update(); }
     };
     $('#c-go', d).onclick = e => run(e.currentTarget, async () => {
-      const r = await api('generate_drafts', {seed_ids: picked(), theme: $('#c-theme', d).value});
+      const provider = ($('#c-ai', d) || {}).value || '';
+      if (provider) setAi(provider);
+      const r = await api('generate_drafts', {seed_ids: picked(), theme: $('#c-theme', d).value, provider});
       closeDialog('ok');
       ui.filter = 'draft';
       await load();

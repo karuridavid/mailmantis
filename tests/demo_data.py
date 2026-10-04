@@ -48,7 +48,7 @@ def load_demo(app, placements):
                      "8a1b2c002@smtp-brevo.com", "Fernhill Classes", now - timedelta(days=2), now - timedelta(days=2)))
         cur.execute("INSERT INTO app_settings(name,value) VALUES('senders_migrated','1')")
         for name, value in {"ai_provider": "gemini",
-                            "ai_model": "gemini-3.8-flash", "ai_key_enc": app.seal("demo"),
+                            "ai_model": "gemini-3.8-flash", "ai_key_enc": app.seal("demo"), "ai_key_enc:claude": app.seal("demo"), "ai_model:claude": "claude-opus-5-5",
                             "google_client_id": "1234567890-demo.apps.googleusercontent.com",
                             "google_client_secret_enc": app.seal("demo")}.items():
             cur.execute("INSERT INTO app_settings(name,value) VALUES(%s,%s)", (name, value))

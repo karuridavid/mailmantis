@@ -221,6 +221,32 @@ g = [c for c in calls("gemini") if c[1] == "gemini-nosearch"]
 check(len(g) == 2 and g[0][4] and not g[1][4], "brief retries without search when search quota is used up")
 call("save_ai", provider="gemini", model="gemini-3.8-flash", key="")
 
+# --- Other AI providers: Claude, OpenAI-compatible, and Copy prompt
+call("save_ai", expect=400, provider="claude", model="", key="")
+call("save_ai", expect=400, provider="nope", model="", key="k")
+call("save_ai", provider="claude", model="", key="sk-ant-test", make_default=False)
+cfg = call("get_config")
+claude = next(p for p in cfg["ai"]["providers"] if p["id"] == "claude")
+check(claude["ready"] and claude["model"] == "claude-opus-5-5" and cfg["ai"]["default"] == "gemini", "Claude saved without changing the default")
+check("sk-ant" not in json.dumps(cfg), "AI keys not exposed")
+summary = call("analyze_website", provider="claude")
+check(summary["summary"].startswith("claude brief"), "brief written by the chosen provider")
+call("analyze_website", expect=400, provider="openai")  # no key saved
+call("save_ai", provider="groq", model="", key="gsk-test")
+check(call("get_config")["ai"]["default"] == "groq", "saving makes a provider the default unless told not to")
+r = call("test_ai", provider="groq")
+check(r["works"] and "gpt-oss-120b" in r["message"], "test_ai: Groq answers")
+call("save_ai", provider="groq", model="bad-model", key="", make_default=False)
+r = call("test_ai", provider="groq")
+check(not r["works"] and "recognise" in r["message"], "test_ai: reports a bad model")
+call("save_ai", expect=400, provider="groq", model="bad model!", key="")
+r = call("remove_ai", provider="groq")
+cfg = call("get_config")
+check(cfg["ai"]["default"] == "none" and not next(p for p in cfg["ai"]["providers"] if p["id"] == "groq")["ready"], "removing the default provider clears the default")
+call("save_ai", provider="gemini", model="gemini-3.8-flash", key="")
+p = call("ai_prompt", task="brief")
+check("Reply with only the brief as plain text" in p["prompt"] and "Title: Fernhill" in p["prompt"], "copy prompt for the brief includes the page text")
+
 # --- Microsoft (Outlook) inboxes
 call("microsoft_oauth_start", expect=400, purpose="connect")
 call("save_microsoft", expect=400, client_id="not-a-guid", client_secret="x")

@@ -1,6 +1,7 @@
 """Unit tests for the Microsoft Graph client and Gemini research parsing, with HTTP stubbed out."""
 import io
 import json
+import urllib.error
 import os
 import sys
 from pathlib import Path
@@ -107,16 +108,99 @@ app.urllib.request.urlopen = gemini({"candidates": [{"content": {"parts": [{"tex
                                                     "groundingMetadata": {"groundingChunks": [{"web": {"uri": "https://vertexaisearch/redirect/1", "title": "fernhill.co.uk"}}]},
                                                     "urlContextMetadata": {"urlMetadata": [{"retrievedUrl": "https://fernhill.co.uk", "urlRetrievalStatus": "URL_RETRIEVAL_STATUS_SUCCESS"}]}}]})
 app.site_reader.read_site = lambda urls, **kw: ("[https://fernhill.co.uk] Title: Fernhill", ["https://fernhill.co.uk"])
-summary, sources = app.summarize_website("k", "gemini-3.8-flash", "fernhill.co.uk", ["https://fernhill.co.uk"])
+summary, sources = app.summarize_website({"provider": "gemini", "key": "k", "model": "gemini-3.8-flash"}, "fernhill.co.uk", ["https://fernhill.co.uk"])
 check(SENT["tools"] == [{"url_context": {}}, {"google_search": {}}] and "responseMimeType" not in SENT["generationConfig"], "research tools on, no JSON mime")
 check("Title: Fernhill" in SENT["contents"][0]["parts"][0]["text"], "fetched page text included in prompt")
 check(summary == "A pottery studio." and sources == ["https://fernhill.co.uk", "fernhill.co.uk"], "summary parsed, sources deduplicated")
 app.urllib.request.urlopen = gemini({"candidates": [{"content": {"parts": [{"text": "{\"summary\": \"\", \"note\": \"No information found\"}"}]}}]})
 try:
-    app.summarize_website("k", "gemini-3.8-flash", "nothing.example", ["https://nothing.example"])
+    app.summarize_website({"provider": "gemini", "key": "k", "model": "gemini-3.8-flash"}, "nothing.example", ["https://nothing.example"])
     check(False, "empty summary raises")
 except ValueError as exc:
-    check("No information found" in str(exc) and "Write the brief yourself" in str(exc), "empty summary explains why")
+    check("No information found" in str(exc) and "write the brief yourself" in str(exc), "empty summary explains why")
+
+# ---------------------------------------------------------------- Other AI providers
+import ai_clients  # noqa: E402
+
+check(ai_clients.parse_json('Sure!\n```json\n{"body": "Hi"}\n```') == {"body": "Hi"}, "parse_json: fenced JSON")
+check(ai_clients.parse_json("Plain brief text.", research=True) == {"summary": "Plain brief text."}, "parse_json: research text becomes the summary")
+schema = ai_clients._json_schema(app.EMAILS_SCHEMA)
+check(schema["properties"]["emails"]["items"]["additionalProperties"] is False and schema["properties"]["emails"]["items"]["properties"]["ref"] == {"type": "integer"},
+      "Gemini schema converted to JSON Schema")
+
+CHAT = {}
+
+
+def chat(reply, status=200):
+    def handler(req, timeout=0):
+        CHAT.update(url=req.full_url, body=json.loads(req.data), auth=req.headers.get("Authorization"))
+        if status != 200:
+            raise urllib.error.HTTPError(req.full_url, status, "err", {}, io.BytesIO(json.dumps(reply).encode()))
+        return Resp(json.dumps(reply).encode())
+    return handler
+
+
+ai_clients.urllib.request.urlopen = chat({"choices": [{"message": {"content": '{"body": "Thanks!"}'}, "finish_reason": "stop"}]})
+data, _ = ai_clients.chat_request("groq", "gk", "openai/gpt-oss-120b", "Write")
+check(data == {"body": "Thanks!"} and CHAT["url"] == "https://api.groq.com/openai/v1/chat/completions" and CHAT["auth"] == "Bearer gk"
+      and CHAT["body"]["response_format"] == {"type": "json_object"}, "Groq chat request and JSON mode")
+ai_clients.urllib.request.urlopen = chat({"choices": [{"message": {"content": '{"body": "Hey"}'}}]})
+ai_clients.chat_request("openrouter", "ok", "openrouter/free", "Write")
+check("response_format" not in CHAT["body"] and CHAT["url"].startswith("https://openrouter.ai/"), "OpenRouter skips JSON mode (free models vary)")
+for status, payload, words in ((401, {"error": {"message": "bad key"}}, "rejected the API key"),
+                               (429, {"error": {"message": "slow down"}}, "rate limit"),
+                               (429, {"error": {"code": "insufficient_quota", "message": "quota"}}, "no credit"),
+                               (404, {"error": {"message": "no model"}}, "doesn’t recognise")):
+    ai_clients.urllib.request.urlopen = chat(payload, status)
+    try:
+        ai_clients.chat_request("openai", "k", "gpt-x", "Write")
+        check(False, f"chat error {status} raises")
+    except ai_clients.AIError as exc:
+        check(words in str(exc), f"chat error {status}: {exc}")
+app.site_reader.read_site = lambda urls, **kw: ("", [])
+try:
+    app.summarize_website({"provider": "groq", "key": "k", "model": "m"}, "blocked.example", ["https://blocked.example"])
+    check(False, "text-only provider without page text raises")
+except ValueError as exc:
+    check("can’t open websites" in str(exc), "text-only provider explains it can’t read a blocked site")
+
+CLAUDE = {}
+
+
+class FakeBlock:
+    def __init__(self, data):
+        self.data = data
+
+    def to_dict(self):
+        return self.data
+
+
+class FakeClaude:
+    def __init__(self, **kw):
+        CLAUDE["client"] = kw
+        self.beta = self
+        self.messages = self
+
+    def create(self, **kw):
+        CLAUDE.setdefault("calls", []).append(kw)
+        if len(CLAUDE["calls"]) == 1 and kw.get("tools"):
+            return type("R", (), {"stop_reason": "pause_turn", "content": [FakeBlock({"type": "server_tool_use", "name": "web_fetch"})]})()
+        return type("R", (), {"stop_reason": "end_turn", "content": [
+            FakeBlock({"type": "web_fetch_tool_result", "content": {"type": "web_fetch_result", "url": "https://fernhill.co.uk"}}),
+            FakeBlock({"type": "text", "text": '{"summary": "Claude brief.", "note": ""}'})]})()
+
+
+ai_clients.anthropic.Anthropic = FakeClaude
+app.site_reader.read_site = lambda urls, **kw: ("[https://fernhill.co.uk] Title: Fernhill", ["https://fernhill.co.uk"])
+summary, sources = app.summarize_website({"provider": "claude", "key": "ck", "model": "claude-opus-5-5"}, "fernhill.co.uk", ["https://fernhill.co.uk"])
+first, second = CLAUDE["calls"]
+check(summary == "Claude brief." and sources == ["https://fernhill.co.uk"], "Claude brief parsed with fetched sources")
+check([t["type"] for t in first["tools"]] == ["web_fetch_20260209", "web_search_20260209"] and first["fallbacks"] == "default"
+      and "server-side-fallback-2026-07-01" in first["betas"], "Claude research uses web fetch, web search and fallbacks")
+check(len(second["messages"]) == 2 and second["messages"][1]["role"] == "assistant", "pause_turn resumes with the paused turn")
+CLAUDE.clear()
+ai_clients.claude_request("ck", "claude-opus-5-5", "Write", schema_def=app.REPLY_SCHEMA)
+check(CLAUDE["calls"][0]["output_config"]["format"]["type"] == "json_schema" and "tools" not in CLAUDE["calls"][0], "Claude drafts use structured output")
 
 # ---------------------------------------------------------------- OAuth app checks
 import base64  # noqa: E402

@@ -21,6 +21,7 @@ os.environ.setdefault("DATA_DIR", str(ROOT / ".data-test"))
 os.environ.setdefault("IMAP_INSECURE_TLS", "1")  # IMAP inboxes on localhost use GreenMail's self-signed certificate.
 sys.path.insert(0, str(ROOT))
 
+import ai_clients  # noqa: E402
 import gmail_api  # noqa: E402
 import microsoft_api  # noqa: E402
 import site_reader  # noqa: E402
@@ -79,6 +80,25 @@ gmail_api.send = fake_gmail_send
 gmail_api.filter_status = lambda token, sender: {"never_spam": True, "important": False}
 gmail_api.create_never_spam_filter = fake_create_filter
 app.gemini_request = fake_gemini
+
+
+def fake_other(name):
+    def handler(*args, schema_def=None, research=False, **kw):
+        prompt = args[-1]
+        CALLS.append([name, args[-2], research])
+        if args[-2] == "bad-model":
+            raise ai_clients.AIError(f"{name} doesn’t recognise the model", "model")
+        if research:
+            return {"summary": f"{name} brief: Fernhill Pottery makes stoneware."}, []
+        if '"emails"' in prompt:
+            n = prompt.count("- ref ")
+            return {"emails": [{"ref": i, "subject": f"{name} subject {i}", "body": f"{name} body {i}."} for i in range(n)]}, []
+        return {"body": f"{name} reply", "ok": True}, []
+    return handler
+
+
+ai_clients.claude_request = fake_other("claude")
+ai_clients.chat_request = lambda provider, *a, **kw: fake_other(provider)(*a, **kw)
 app.gemini_models = lambda key: ["gemini-zero", "gemini-3.8-flash", "gemini-3.8-pro"]
 site_reader.read_site = lambda urls, **kw: ("[https://example.com] Title: Fernhill Pottery", ["https://example.com"])
 
