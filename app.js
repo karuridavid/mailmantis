@@ -92,7 +92,12 @@ const domainEmails = () => S.drafts.filter(d => d.kind === 'domain');
 const sentEmails = () => domainEmails().filter(d => d.status === 'sent');
 const repliesOf = id => S.drafts.filter(d => d.parent_id === id).sort((a, b) => ms(a.created_at) - ms(b.created_at));
 const waiting = d => d.kind === 'domain' && d.status === 'sent' && (!d.placement || d.placement === 'Not found');
+// Still not found 30 minutes after sending: the inbox most likely refused it.
+const missing = d => d.placement === 'Not found' && Date.now() - ms(d.sent_at) > 30 * 60000;
 const editable = d => d.status === 'draft' || d.status === 'ready';
+// A reply the domain sends back to the seed inbox (the seed's own replies come from the seed's address).
+const fromDomain = d => d.kind === 'reply' && d.from_email.toLowerCase() !== d.seed_email.toLowerCase();
+const senderName = email => (S.senders || []).find(x => x.email.toLowerCase() === String(email || '').toLowerCase())?.from_name || String(email || '').split('@')[0];
 const PROVIDERS = {gmail: 'Gmail', workspace: 'Google Workspace', outlook: 'Outlook', yahoo: 'Yahoo Mail', aol: 'AOL Mail', icloud: 'iCloud Mail', imap: 'IMAP'};
 const seedKind = s => s ? ({google_oauth: 'google', microsoft_oauth: 'microsoft'})[s.auth_type] || 'imap' : 'imap';
 const canReply = s => s && (seedKind(s) !== 'google' || s.gmail_send_enabled);
@@ -109,7 +114,7 @@ function st(d) {
   }
   if (d.placement === 'Spam') return {k: 'spam', label: 'Spam'};
   if (d.placement === 'Other folder') return {k: 'tab', label: 'Other folder'};
-  if (d.placement === 'Not found') return {k: 'sent', label: 'Not found yet'};
+  if (d.placement === 'Not found') return {k: 'sent', label: missing(d) ? 'Not delivered?' : 'Not found yet'};
   return {k: 'sent', label: Date.now() - ms(d.sent_at) < 20 * 60000 ? 'Checking…' : 'Not checked'};
 }
 const pill = d => { const s = st(d); return `<span class="pill s-${s.k}">${esc(s.label)}</span>`; };
@@ -297,7 +302,7 @@ function overview() {
   const week = sentEmails().filter(d => inWindow(d, 7, 0)), prev = sentEmails().filter(d => inWindow(d, 14, 7));
   const rateOf = list => { const c = list.filter(checkedPlacement); return c.length ? c.filter(d => d.placement === 'Inbox').length / c.length * 100 : null; };
   const spamOf = list => list.filter(d => d.placement === 'Spam').length;
-  const repliesIn = (from, to) => S.drafts.filter(d => d.kind === 'reply' && d.status === 'sent' && ms(d.sent_at) >= now - from * DAY && ms(d.sent_at) < now - to * DAY).length;
+  const repliesIn = (from, to) => S.drafts.filter(d => d.kind === 'reply' && !fromDomain(d) && d.status === 'sent' && ms(d.sent_at) >= now - from * DAY && ms(d.sent_at) < now - to * DAY).length;
   const delta = (cur, old, {pct = false, lowerIsBetter = false, neutral = false} = {}) => {
     if (cur === null || old === null || (!pct && !old && !cur)) return '<span class="faint">No earlier data</span>';
     const diff = pct ? Math.round(cur - old) : cur - old;
@@ -462,7 +467,7 @@ function composerBar(d) {
   const manual = aiChoice() === 'manual';
   const dirty = isDirty(d);
   const seed = seedOf(d.seed_email);
-  const replyBlocked = d.kind === 'reply' && seed && seed.auth_type === 'google_oauth' && !seed.gmail_send_enabled;
+  const replyBlocked = d.kind === 'reply' && !fromDomain(d) && seed && seed.auth_type === 'google_oauth' && !seed.gmail_send_enabled;
   return `<div class="composer">
     <div class="ai" title="${esc(blocker)}">${icon('sparkles')}<input data-edit="guidance" data-id="${esc(d.id)}" value="${esc(editVal(d, 'guidance'))}" placeholder="${d.kind === 'reply' ? 'What to say (optional)' : 'Instructions (optional)'}" ${blocker ? 'disabled' : ''}>
       ${aiPicker()}${btn('ai-write', manual ? 'Get prompt' : d.body ? 'Rewrite' : 'Write', {cls: 'sm', id: d.id, disabled: !!blocker, title: manual ? 'Copy a prompt for Claude, ChatGPT or any chat app' : ''})}</div>
@@ -490,7 +495,7 @@ function detail(d) {
     : `<div class="paper"><pre class="body-text">${esc(d.body)}</pre></div>`;
   let extra = '';
   if (d.kind === 'domain' && d.status === 'sent') extra = placementCard(d) + timeline(d) + repliesSection(d);
-  if (isReply && editable(d)) {
+  if (isReply && editable(d) && !fromDomain(d)) {
     const seed = seedOf(d.seed_email);
     if (seed && seed.auth_type === 'google_oauth' && !seed.gmail_send_enabled)
       extra = `<div class="callout warn" style="margin-top:16px">${icon('key')}<div>This inbox can’t send replies yet. ${btn('allow', 'Allow sending replies', {cls: 'sm', id: seed.id})}</div></div>`;
@@ -503,12 +508,14 @@ function placementCard(d) {
   const seed = seedOf(d.seed_email);
   const where = PROVIDERS[seed ? seed.provider : 'gmail'] || 'The inbox';
   const icons = {inbox: 'inbox', tab: 'folder', spam: 'alert', sent: 'clock'};
-  const title = s.k === 'sent' ? (d.placement === 'Not found' ? 'Not found yet' : 'Waiting for the first check') : s.label;
+  const title = s.k === 'sent' ? (d.placement === 'Not found' ? s.label : 'Waiting for the first check') : s.label;
   const why = {
     inbox: `${where} delivered this to the ${d.inbox_tab === 'Focused' ? 'Focused' : 'Primary'} inbox.`,
     tab: d.placement === 'Other folder' ? 'Found outside Inbox and Spam (archived or in another folder).' : `Delivered, but ${where} sorted it into ${d.inbox_tab === 'Other' ? 'the Other inbox' : 'the ' + d.inbox_tab + ' tab'}.`,
     spam: `${where} put this in spam. Use Not spam below to move it to the inbox, then reply. Also check SPF, DKIM and DMARC for your domain.`,
-    sent: d.placement === 'Not found' ? 'The message hasn’t shown up yet. Delivery can take a few minutes.' : 'The dashboard checks automatically while it’s open.'
+    sent: d.placement !== 'Not found' ? 'The dashboard checks automatically while it’s open.'
+      : !missing(d) ? 'The message hasn’t shown up yet. Delivery can take a few minutes.'
+      : `It isn’t anywhere in ${seed ? seed.email : 'this inbox'}, including Spam and Trash, so it most likely never arrived. Look for a bounce (delivery failure) in ${d.from_email}’s mailbox: it says why ${where} refused it.${seed && seed.provider === 'workspace' ? ' Google Workspace can also hold mail in an admin quarantine.' : ''} Inbox filters can’t help with this: they only act on mail that’s accepted.`
   }[s.k];
   const labels = (d.gmail_labels || '').split(',').filter(Boolean);
   const marked = labels.some(l => ['IMPORTANT', 'FLAGGED'].includes(l));
@@ -529,7 +536,7 @@ function timeline(d) {
     const s = st({kind: 'domain', status: 'sent', placement: a.result, inbox_tab: a.tab, sent_at: d.sent_at});
     items.push([a.created_at, s.k, 'Checked: ' + (a.result === 'Not found' ? 'not found' : s.label)]);
   });
-  repliesOf(d.id).filter(r => r.status === 'sent').forEach(r => items.push([r.sent_at, 'inbox', 'Reply sent from ' + nameOf(r.from_email)]));
+  repliesOf(d.id).filter(r => r.status === 'sent').forEach(r => items.push([r.sent_at, 'inbox', 'Reply sent from ' + (fromDomain(r) ? senderName(r.from_email) : nameOf(r.from_email))]));
   items.sort((a, b) => ms(a[0]) - ms(b[0]));
   return `<div class="section-title">Timeline</div><div class="timeline">${items.map(([t, k, text]) =>
     `<div class="tl s-${k}"><span>${esc(text)}</span><span class="when" title="${esc(fullDate(t))}">${esc(fullDate(t))}</span></div>`).join('')}</div>`;
@@ -540,7 +547,7 @@ function repliesSection(d) {
   const open = reps.some(r => editable(r));
   const seed = seedOf(d.seed_email);
   const list = reps.map(r => {
-    const head = `<div class="reply-head">${avatar(r.seed_email, 'sm')}<span class="grow"><b>${esc(nameOf(r.from_email))}</b> → ${esc(r.to_email)}</span>${pill(r)}
+    const head = `<div class="reply-head">${avatar(r.from_email, 'sm')}<span class="grow"><b>${esc(fromDomain(r) ? senderName(r.from_email) : nameOf(r.from_email))}</b> → ${esc(r.to_email)}</span>${pill(r)}
       ${editable(r) ? btn('del', '', {ico: 'trash', cls: 'sm icon ghost', id: r.id, title: 'Delete reply'}) : `<span class="faint small mono">${ago(r.sent_at)}</span>`}</div>`;
     const body = editable(r)
       ? `<textarea class="body-input" data-edit="body" data-id="${esc(r.id)}" placeholder="Write a short, natural reply…" maxlength="5000">${esc(editVal(r, 'body'))}</textarea>${composerBar(r)}`
@@ -550,7 +557,20 @@ function repliesSection(d) {
   const blocked = seed && !canReply(seed);
   return `<div class="section-title">Replies <span class="count">${reps.length}</span></div>
     ${blocked ? `<div class="callout warn">${icon('key')}<div>${esc(nameOf(d.seed_email))} can’t send replies yet. ${btn('allow', 'Allow sending replies', {cls: 'sm', id: seed.id})}</div></div>` : ''}
-    ${list}${open ? '' : `<div style="margin-top:12px">${btn('reply', reps.length ? 'Reply again' : 'Reply from ' + esc(nameOf(d.seed_email)), {ico: 'reply', id: d.id})}</div>`}`;
+    ${list}${open ? '' : `<div class="row-actions" style="margin-top:12px">${replyButtons(d, reps)}</div>`}`;
+}
+
+// The seed always can reply; once it has, the domain can answer in the same thread. Whoever's turn it is gets the primary button.
+function replyButtons(d, reps) {
+  const sent = reps.filter(r => r.status === 'sent');
+  const last = sent[sent.length - 1];
+  const seedTurn = !last || fromDomain(last);
+  const seedBtn = btn('reply', (sent.some(r => !fromDomain(r)) ? 'Reply again from ' : 'Reply from ') + esc(nameOf(d.seed_email)), {ico: 'reply', id: d.id, cls: seedTurn ? 'primary' : ''});
+  const active = S.sender && S.sender.email.toLowerCase() === d.from_email.toLowerCase();
+  if (!sent.some(r => !fromDomain(r))) return seedBtn;
+  const domainBtn = btn('reply', 'Reply from ' + esc(senderName(d.from_email)), {ico: 'reply', id: d.id, cls: seedTurn ? '' : 'primary',
+    attrs: 'data-v="domain"', disabled: !active, title: active ? 'Answer in the same conversation from ' + d.from_email : 'Make ' + d.from_email + ' the active domain to reply from it'});
+  return seedTurn ? seedBtn + domainBtn : domainBtn + seedBtn;
 }
 
 // ------------------------------------------------------------------ seeds
@@ -713,7 +733,8 @@ function aiSetupDialog(id) {
     <div class="dlg-head"><h2>${p.ready ? 'Edit' : 'Set up'} ${esc(p.label)}</h2><p>${esc(p.note)} <a class="link" href="${esc(p.key_url)}" target="_blank" rel="noopener">Get an API key</a></p></div>
     <div class="dlg-body">
       <div class="field"><label class="label" for="ai-model">Model</label><input class="input mono" id="ai-model" value="${esc(p.model)}" placeholder="${esc(p.default_model)}" autocomplete="off" spellcheck="false">
-        <span class="hint">Leave as ${esc(p.default_model)} unless you want another.${p.id === 'claude' ? ' claude-sonnet-5-5 and claude-haiku-4-5 cost less.' : p.id === 'openrouter' ? ' Any model ID ending in :free costs nothing.' : ''}</span></div>
+        <span class="hint">Leave as ${esc(p.default_model)} unless you want another.${p.id === 'claude' ? ' claude-sonnet-5-5 and claude-haiku-4-5 cost less.' : p.id === 'openrouter' ? ' Any model ID ending in :free costs nothing.' : p.id === 'groq' ? ' llama-3.3-70b-versatile also works on every Groq key.' : p.id === 'cloudflare' ? ' @cf/meta/llama-3.1-8b-instruct-fast uses less of the free allowance.' : ''}</span></div>
+      ${p.needs_account ? `<div class="field"><label class="label" for="ai-account">Account ID</label><input class="input mono" id="ai-account" value="${esc(p.account)}" placeholder="32 characters" autocomplete="off" spellcheck="false"><span class="hint">On the Cloudflare dashboard, open AI → Workers AI → Use REST API. The account ID is shown there, and Create a Workers AI API Token makes the key.</span></div>` : ''}
       <div class="field"><label class="label" for="ai-key">API key</label><input class="input" id="ai-key" type="password" autocomplete="new-password" placeholder="${p.ready ? 'Saved. Leave blank to keep it' : ''}"><span class="hint">Encrypted in the database and only sent from the server to ${esc(p.short)}.</span></div>
       <label class="check-line"><input type="checkbox" class="checkbox" id="ai-default" ${S.ai.default === p.id || S.ai.default === 'none' ? 'checked' : ''}> Use it by default</label>
       <p class="form-error" id="ai-error" style="text-align:left"></p></div>
@@ -723,7 +744,8 @@ function aiSetupDialog(id) {
       const b = e.currentTarget;
       b.disabled = true;
       try {
-        await api('save_ai', {provider: p.id, model: $('#ai-model', d).value, key: $('#ai-key', d).value, make_default: $('#ai-default', d).checked});
+        await api('save_ai', {provider: p.id, model: $('#ai-model', d).value, key: $('#ai-key', d).value, make_default: $('#ai-default', d).checked,
+          ...(p.needs_account ? {account: $('#ai-account', d).value.trim()} : {})});
         delete ui.checks['ai:' + p.id];
         closeDialog('ok');
         await load();
@@ -838,10 +860,11 @@ function memberView() {
     const kind = seedKind(s);
     const actions = [];
     if (kind === 'google' && !s.gmail_send_enabled) actions.push(btn('allow', 'Allow replies', {cls: 'sm', id: s.id}));
-    if (S.sender && kind !== 'imap' && s.filter_never_spam !== true) actions.push(btn('filter-spam', kind === 'microsoft' ? 'Always Focused' : 'Never send to Spam', {cls: 'sm ghost', id: s.id}));
+    if (S.sender && kind !== 'imap' && s.filter_never_spam !== true) actions.push(btn('filter-spam', kind === 'microsoft' ? 'Always Focused + important' : 'Never send to Spam + important', {cls: 'sm ghost', id: s.id}));
+    else if (S.sender && kind !== 'imap' && s.filter_important !== true) actions.push(btn('filter-important', 'Mark important', {cls: 'sm ghost', id: s.id}));
     actions.push(btn('remove-seed', 'Disconnect', {cls: 'sm ghost danger', id: s.id}));
     return `<div class="member-inbox"><div class="who"><b>${esc(s.email)}</b><span>${esc(PROVIDERS[s.provider] || s.provider)} · connected ${ago(s.created_at, true)}</span></div>
-      <div class="pills">${kind === 'google' && !s.gmail_send_enabled ? '<span class="pill s-tab">Read only</span>' : '<span class="pill s-inbox">Connected</span>'}${s.filter_never_spam ? `<span class="pill s-inbox">${kind === 'microsoft' ? 'Always Focused' : 'Never spam'}</span>` : ''}</div>
+      <div class="pills">${kind === 'google' && !s.gmail_send_enabled ? '<span class="pill s-tab">Read only</span>' : '<span class="pill s-inbox">Connected</span>'}${s.filter_never_spam ? `<span class="pill s-inbox">${kind === 'microsoft' ? 'Always Focused' : 'Never spam'}</span>` : ''}${s.filter_important ? '<span class="pill s-inbox">Important</span>' : ''}</div>
       <div class="row-actions">${actions.join('')}</div></div>`;
   };
   return `<div class="member-page">
@@ -1037,7 +1060,7 @@ const ACTIONS = {
   },
   async reply(el) {
     await withBusy(el, async () => {
-      const r = await api('create_draft', {parent_id: el.dataset.id});
+      const r = await api('create_draft', {parent_id: el.dataset.id, ...(el.dataset.v === 'domain' ? {from: 'domain'} : {})});
       await load();
       setTimeout(() => { const t = $(`[data-reply="${CSS.escape(r.id)}"] textarea`); if (t) { t.scrollIntoView({block: 'center'}); t.focus(); } }, 0);
     });
@@ -1048,10 +1071,10 @@ const ACTIONS = {
     const s = S.seeds.find(x => x.id === el.dataset.id);
     const from = S.sender ? S.sender.email : 'your sender';
     if (seedKind(s) === 'microsoft') {
-      if (!await confirmBox({title: 'Always Focused?', text: `Adds a Focused Inbox override in ${s.email} so mail from ${from} always lands in Focused rather than Other.\n\nOutlook’s junk filtering can’t be switched off through Microsoft Graph, so this doesn’t stop Junk. Use Not spam on an email for that.`, ok: 'Continue with Microsoft'})) return;
+      if (!await confirmBox({title: 'Always Focused and important?', text: `Adds a Focused Inbox override in ${s.email} so mail from ${from} always lands in Focused rather than Other, plus an inbox rule that marks it important.\n\nOutlook’s junk filtering can’t be switched off through Microsoft Graph, so this doesn’t stop Junk. Use Not spam on an email for that.`, ok: 'Continue with Microsoft'})) return;
       return oauthFlow('microsoft', 'filter', s.id);
     }
-    if (!await confirmBox({title: 'Never send to Spam?', text: `Creates a Gmail filter in ${s.email} so mail from ${from} skips Spam.\n\nIt only affects future emails, and placement results for this inbox won’t show Gmail’s natural decision.`, ok: 'Continue with Google'})) return;
+    if (!await confirmBox({title: 'Never send to Spam and mark important?', text: `Creates one Gmail filter in ${s.email} so mail from ${from} skips Spam and is marked important.\n\nIt only affects future emails, and placement results for this inbox won’t show Gmail’s natural decision.`, ok: 'Continue with Google'})) return;
     await googleFlow('filter', s.id);
   },
   async 'filter-important'(el) {

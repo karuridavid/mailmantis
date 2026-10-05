@@ -106,9 +106,9 @@ check(loc.startswith("/?google=filter_error"), f"filter with wrong account rejec
 hook("profile", email="jane@gmail.com", scope="openid email https://www.googleapis.com/auth/gmail.settings.basic")
 status, loc = oauth("filter", seed_id=jane["id"])
 check(loc == "/?google=filter_added", f"filter added -> {loc}")
-check(calls("create_filter")[-1] == ["create_filter", "hi@example.com", True, False], "never-spam filter for sender email")
+check(calls("create_filter")[-1] == ["create_filter", "hi@example.com", True, True], "one click: never-spam and important filter for sender email")
 jane = {s["email"]: s for s in call("get_config")["seeds"]}["jane@gmail.com"]
-check(jane["filter_never_spam"] is True and jane["filter_important"] is False, "filter status stored after creation")
+check(jane["filter_never_spam"] is True and jane["filter_important"] is False, "filter status stored after creation (as Gmail reports it)")
 check(jane["gmail_send_enabled"], "send permission kept after filter re-consent")
 res = call("check_filters")
 check(all("never_spam" in r for r in res["results"].values()), "check_filters reads all oauth seeds")
@@ -161,6 +161,30 @@ call("set_draft_status", id=reply_id, status="ready")
 call("send_draft", id=reply_id)
 g = calls("gmail_send")[-1]
 check(g[1:3] == ["jane@gmail.com", "hi@example.com"] and g[4] == sent["message_id"] and g[5] == "t1", "reply sent via Gmail in the same thread")
+f = calls("gmail_find")[-1]
+check(f[2:4] == ["hi@example.com", "Autumn hours"] and f[4] > 0, "placement lookup gets sender, subject and send time for the fallback search")
+
+# the domain answers the seed's reply in the same thread, then the seed replies again
+seed_reply = {d["id"]: d for d in call("get_config")["drafts"]}[reply_id]
+dr = call("create_draft", parent_id=sent["id"], **{"from": "domain"})["id"]
+r = {d["id"]: d for d in call("get_config")["drafts"]}[dr]
+check(r["kind"] == "reply" and r["parent_id"] == sent["id"] and r["from_email"] == "hi@example.com" and r["to_email"] == "jane@gmail.com"
+      and r["subject"] == "Re: Autumn hours", "domain reply draft addressed sender -> seed")
+call("write_with_gemini", id=dr)
+check(calls("gemini")[-1][5:] == [True, True], "domain reply written from the conversation")
+check("business's next email" in call("ai_prompt", id=dr)["prompt"], "chat-app prompt for a domain reply")
+call("set_draft_status", id=dr, status="ready")
+call("send_draft", id=dr)
+smtp = calls("smtp_send")[-1]
+check(smtp[1:4] == ["hi@example.com", "Example Co", "jane@gmail.com"] and smtp[5] == seed_reply["message_id"]
+      and smtp[6] == [sent["message_id"], seed_reply["message_id"]], "domain reply sent over SMTP in reply to the seed")
+dr_sent = {d["id"]: d for d in call("get_config")["drafts"]}[dr]
+again = call("create_draft", parent_id=sent["id"])["id"]
+call("write_with_gemini", id=again)
+check(calls("gemini")[-1][5:] == [True, False], "seed's second reply sees the conversation")
+call("set_draft_status", id=again, status="ready"); call("send_draft", id=again)
+g = calls("gmail_send")[-1]
+check(g[4] == dr_sent["message_id"] and g[5] == "t1", "seed's second reply answers the domain's reply in the same thread")
 
 # reply from a seed without send permission
 d2r = {d["id"]: d for d in call("get_config")["drafts"]}[d2["id"]]
@@ -169,6 +193,8 @@ rb = call("create_draft", parent_id=d2["id"])["id"]
 call("save_draft", id=rb, subject="Re: x", body="thanks"); call("set_draft_status", id=rb, status="ready")
 err = call("send_draft", expect=400, id=rb)
 check("Allow sending replies" in err["error"], "reply blocked until send permission granted")
+err = call("create_draft", expect=400, parent_id=d2["id"], **{"from": "domain"})
+check("replied yet" in err["error"], "domain can't reply before the seed has")
 
 # --- seed management
 call("set_seed_enabled", id=bob["id"], enabled=False)
@@ -240,6 +266,13 @@ call("save_ai", provider="groq", model="bad-model", key="", make_default=False)
 r = call("test_ai", provider="groq")
 check(not r["works"] and "recognise" in r["message"], "test_ai: reports a bad model")
 call("save_ai", expect=400, provider="groq", model="bad model!", key="")
+call("save_ai", expect=400, provider="cloudflare", model="", key="cf-token")  # account ID missing
+call("save_ai", expect=400, provider="cloudflare", model="", key="cf-token", account="not-an-id")
+call("save_ai", provider="cloudflare", model="@cf/meta/llama-3.1-8b-instruct-fast", key="cf-token", account="A" * 32, make_default=False)
+cf = next(p for p in call("get_config")["ai"]["providers"] if p["id"] == "cloudflare")
+check(cf["ready"] and cf["needs_account"] and cf["account"] == "a" * 32 and cf["model"] == "@cf/meta/llama-3.1-8b-instruct-fast", "cloudflare saved with account ID")
+check(call("test_ai", provider="cloudflare")["works"], "cloudflare test works")
+call("remove_ai", provider="cloudflare")
 r = call("remove_ai", provider="groq")
 cfg = call("get_config")
 check(cfg["ai"]["default"] == "none" and not next(p for p in cfg["ai"]["providers"] if p["id"] == "groq")["ready"], "removing the default provider clears the default")
@@ -269,7 +302,7 @@ check(ms_oauth("filter", seed_id=sam["id"]) == "/?google=filter_added", "outlook
 check(ms_oauth("filter_important", seed_id=sam["id"]) == "/?google=filter_added", "outlook important rule")
 sam = {x["email"]: x for x in call("get_config")["seeds"]}["sam@outlook.com"]
 check(sam["filter_never_spam"] is True and sam["filter_important"] is True, "outlook filter status stored")
-check(calls("ms_filter")[-2][1:] == ["hi@example.com", True, False] and calls("ms_filter")[-1][1:] == ["hi@example.com", False, True], "filters created for the sender")
+check(calls("ms_filter")[-2][1:] == ["hi@example.com", True, True] and calls("ms_filter")[-1][1:] == ["hi@example.com", False, True], "Always Focused adds the important rule too")
 
 ms_draft = call("create_draft", seed_id=sam["id"], subject="Hello Sam", body="Hi Sam")["id"]
 call("set_draft_status", id=ms_draft, status="ready"); call("send_draft", id=ms_draft)

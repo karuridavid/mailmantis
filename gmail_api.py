@@ -69,7 +69,7 @@ def _api(token: str, path: str, *, payload: dict | None = None, query: dict | No
          method: str | None = None) -> dict:
     url = API_ROOT + path
     if query:
-        url += "?" + urlencode(query)
+        url += "?" + urlencode(query, doseq=True)
     data = json.dumps(payload).encode() if payload is not None else None
     return _request(url, data=data, access_token=token, method=method or ("POST" if data else None))
 
@@ -124,32 +124,54 @@ def create_never_spam_filter(token: str, sender_email: str, *, never_spam: bool 
     return True
 
 
-def find_message_placement(token: str, rfc822_message_id: str) -> dict[str, str]:
+def _placement(metadata: dict) -> dict[str, str]:
+    labels = set(metadata.get("labelIds", []))
+    if "SPAM" in labels:
+        placement = "Spam"
+    elif "INBOX" in labels:
+        placement = "Inbox"
+    else:
+        placement = "Other folder"
+    tab = next((name for label, name in INBOX_TABS.items() if label in labels), "") if placement == "Inbox" else ""
+    return {"placement": placement, "tab": tab, "labels": ",".join(sorted(labels)),
+            "gmail_id": str(metadata.get("id", "")), "thread_id": str(metadata.get("threadId", ""))}
+
+
+def _metadata(token: str, gmail_id: str) -> tuple[dict, dict[str, str]]:
+    metadata = _api(token, "/messages/" + quote(gmail_id, safe=""),
+                    query={"format": "metadata", "metadataHeaders": ["Message-ID", "From", "Subject"]})
+    headers = {h.get("name", "").lower(): h.get("value", "")
+               for h in metadata.get("payload", {}).get("headers", [])}
+    return metadata, headers
+
+
+def find_message_placement(token: str, rfc822_message_id: str, *, sender: str = "", subject: str = "",
+                           sent_after: int = 0) -> dict[str, str]:
     """Read Gmail labels for one message without modifying it.
 
     Returns placement (Inbox, Spam, Other folder or Not found), the inbox tab,
     the label list and the Gmail ids needed to reply in the same thread.
+
+    Some sending services (Amazon SES, Microsoft 365, some relays) replace the
+    Message-ID we set, so when it isn't found, sender + exact subject + send time
+    (a Unix timestamp) find the copy instead.
     """
     wanted = rfc822_message_id.strip().strip("<>")
     query = "in:anywhere rfc822msgid:<" + wanted + ">"
     listed = _api(token, "/messages", query={"q": query, "maxResults": "10", "includeSpamTrash": "true"})
     for item in listed.get("messages", []):
-        metadata = _api(token, "/messages/" + quote(str(item.get("id", "")), safe=""),
-                        query={"format": "metadata", "metadataHeaders": "Message-ID"})
-        headers = {h.get("name", "").lower(): h.get("value", "")
-                   for h in metadata.get("payload", {}).get("headers", [])}
-        if headers.get("message-id", "").strip().strip("<>") != wanted:
-            continue
-        labels = set(metadata.get("labelIds", []))
-        if "SPAM" in labels:
-            placement = "Spam"
-        elif "INBOX" in labels:
-            placement = "Inbox"
-        else:
-            placement = "Other folder"
-        tab = next((name for label, name in INBOX_TABS.items() if label in labels), "") if placement == "Inbox" else ""
-        return {"placement": placement, "tab": tab, "labels": ",".join(sorted(labels)),
-                "gmail_id": str(metadata.get("id", "")), "thread_id": str(metadata.get("threadId", ""))}
+        metadata, headers = _metadata(token, str(item.get("id", "")))
+        if headers.get("message-id", "").strip().strip("<>") == wanted:
+            return _placement(metadata)
+    if sender and subject and sent_after:
+        # Gmail's after: takes seconds; a minute of slack covers clock skew between servers.
+        query = f'in:anywhere from:{sender} after:{max(0, sent_after - 60)} subject:"{subject.replace(chr(34), "")}"'
+        listed = _api(token, "/messages", query={"q": query, "maxResults": "10", "includeSpamTrash": "true"})
+        for item in listed.get("messages", []):
+            metadata, headers = _metadata(token, str(item.get("id", "")))
+            if " ".join(headers.get("subject", "").split()) == " ".join(subject.split()) and \
+                    sender.lower() in headers.get("from", "").lower():
+                return _placement(metadata)
     return {"placement": "Not found", "tab": "", "labels": "", "gmail_id": "", "thread_id": ""}
 
 
@@ -179,19 +201,21 @@ def send(account: str, token: str, recipient: str, subject: str, body: str,
 
 
 
-def _gmail_id(token: str, rfc822_message_id: str) -> str:
+def _gmail_id(token: str, rfc822_message_id: str, gmail_id: str = "") -> str:
+    if gmail_id:  # Saved by the last placement check, which may have needed the subject fallback.
+        return gmail_id
     found = find_message_placement(token, rfc822_message_id)
     if not found["gmail_id"]:
         raise ValueError("The message was not found in this inbox")
     return found["gmail_id"]
 
 
-def not_spam(token: str, rfc822_message_id: str) -> None:
+def not_spam(token: str, rfc822_message_id: str, gmail_id: str = "") -> None:
     """Report not spam: remove the SPAM label and put the message in the Inbox."""
-    _api(token, "/messages/" + quote(_gmail_id(token, rfc822_message_id), safe="") + "/modify",
+    _api(token, "/messages/" + quote(_gmail_id(token, rfc822_message_id, gmail_id), safe="") + "/modify",
          payload={"removeLabelIds": ["SPAM"], "addLabelIds": ["INBOX"]})
 
 
-def mark_important(token: str, rfc822_message_id: str) -> None:
-    _api(token, "/messages/" + quote(_gmail_id(token, rfc822_message_id), safe="") + "/modify",
+def mark_important(token: str, rfc822_message_id: str, gmail_id: str = "") -> None:
+    _api(token, "/messages/" + quote(_gmail_id(token, rfc822_message_id, gmail_id), safe="") + "/modify",
          payload={"addLabelIds": ["IMPORTANT"]})

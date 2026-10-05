@@ -1,4 +1,4 @@
-"""Claude and OpenAI-compatible (OpenAI, OpenRouter, Groq) clients for briefs and drafts.
+"""Claude and OpenAI-compatible (OpenAI, OpenRouter, Groq, Cloudflare) clients for briefs and drafts.
 
 Gemini lives in api/app.py. Every client takes a prompt that asks for JSON and
 returns (data, sources): the parsed JSON object and any URLs the model read.
@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 
 import anthropic
@@ -123,42 +124,67 @@ CHAT_BASES = {
     "openai": "https://api.openai.com/v1",
     "openrouter": "https://openrouter.ai/api/v1",
     "groq": "https://api.groq.com/openai/v1",
+    "cloudflare": "https://api.cloudflare.com/client/v4/accounts/{account}/ai/v1",
 }
-LABELS = {"openai": "OpenAI", "openrouter": "OpenRouter", "groq": "Groq"}
+LABELS = {"openai": "OpenAI", "openrouter": "OpenRouter", "groq": "Groq", "cloudflare": "Cloudflare Workers AI"}
+# Groq and Cloudflare sit behind Cloudflare's bot filter, which answers Python's default
+# User-Agent with a 403 (error 1010) before the API ever sees the key.
+USER_AGENT = "MailMantis/1.0"
 
 
 def _chat_error(exc: urllib.error.HTTPError, provider: str, model: str) -> AIError:
     label = LABELS[provider]
     try:
-        error = json.loads(exc.read() or b"{}").get("error", {}) or {}
+        raw = exc.read() or b"{}"
+        data = json.loads(raw)
     except (ValueError, OSError):
-        error = {}
+        data = None  # An HTML page: a proxy or bot filter answered, not the API.
+    error = (data or {}).get("error", {}) or {}
+    if not error and isinstance(data, dict) and data.get("errors"):
+        error = data["errors"][0]  # Cloudflare's API wraps errors in a list.
     message = str(error.get("message", "") if isinstance(error, dict) else error)
     code = str(error.get("code", "") if isinstance(error, dict) else "")
     print(f"{label} error {exc.code} model={model} code={code}: {message[:200]}", flush=True)
-    if exc.code == 401:
-        return AIError(f"{label} rejected the API key. Check it in Settings", "key")
-    if exc.code == 404 or code == "model_not_found":
+    lower = message.lower()
+    if exc.code == 401 or (provider == "cloudflare" and exc.code == 403 and "auth" in lower):
+        hint = " It needs the Workers AI Read permission." if provider == "cloudflare" else ""
+        return AIError(f"{label} rejected the API key.{hint} Check it in Settings", "key")
+    if exc.code == 404 or code in ("model_not_found", "5007") or "no such model" in lower:
+        if provider == "cloudflare" and "model" not in lower:
+            return AIError("Cloudflare doesn’t recognise this account ID. Check it in Settings", "key")
         return AIError(f"{label} doesn’t recognise the model “{model}”. Check it in Settings", "model")
-    if exc.code == 402 or code == "insufficient_quota":
-        return AIError(f"Your {label} account has no credit for {model}. Add credit, or pick a free model", "quota")
+    if exc.code == 402 or code in ("insufficient_quota", "4006") or "neurons" in lower:
+        return AIError(f"Your {label} account has no credit left for {model}. Add credit, wait for the daily free allowance to reset, or pick a free model", "quota")
     if exc.code == 429:
         return AIError(f"{label}’s rate limit for {model} was reached. Wait a minute, or try another model", "rate")
     if exc.code == 403:
-        return AIError(f"{label} doesn’t allow this key to use {model}", "model")
+        if data is None:
+            return AIError(f"{label} blocked the request before checking the key. Try again in a minute", "other")
+        detail = f": {' '.join(message.split())[:160]}" if message else ""
+        if provider == "groq":
+            return AIError(f"Groq doesn’t allow this key to use {model}{detail}. Check the model is allowed in your Groq project’s settings, or try llama-3.3-70b-versatile", "model")
+        return AIError(f"{label} doesn’t allow this key to use {model}{detail}", "model")
     detail = " ".join(message.split())[:160]
     return AIError(f"{label} could not complete this request" + (f": {detail}" if detail else ""))
 
 
-def chat_request(provider: str, api_key: str, model: str, prompt: str, *, research: bool = False) -> tuple[dict, list[str]]:
-    """These APIs can't open websites, so briefs rely on the page text our server fetched."""
+def chat_request(provider: str, api_key: str, model: str, prompt: str, *, research: bool = False,
+                 account: str = "") -> tuple[dict, list[str]]:
+    """These APIs can't open websites, so briefs rely on the page text our server fetched.
+
+    account is the Cloudflare account ID, which is part of the Workers AI URL.
+    """
     payload: dict = {"model": model, "messages": [{"role": "user", "content": prompt}]}
-    if provider != "openrouter":
-        payload["response_format"] = {"type": "json_object"}  # Not every free OpenRouter model supports it.
-    headers = {"Content-Type": "application/json", "Authorization": "Bearer " + api_key}
+    if provider in ("openai", "groq"):
+        # Not every free OpenRouter model or Workers AI model supports it; the prompt asks for JSON anyway.
+        payload["response_format"] = {"type": "json_object"}
+    if provider == "cloudflare":
+        payload["max_tokens"] = 4096  # Workers AI defaults to 256 output tokens, too few for a batch of emails.
+    headers = {"Content-Type": "application/json", "Authorization": "Bearer " + api_key, "User-Agent": USER_AGENT}
     if provider == "openrouter":
         headers["X-Title"] = "Mail Mantis"
-    request = urllib.request.Request(CHAT_BASES[provider] + "/chat/completions", data=json.dumps(payload).encode(),
+    base = CHAT_BASES[provider].format(account=urllib.parse.quote(account, safe=""))
+    request = urllib.request.Request(base + "/chat/completions", data=json.dumps(payload).encode(),
                                      headers=headers, method="POST")
     try:
         with urllib.request.urlopen(request, timeout=120) as response:

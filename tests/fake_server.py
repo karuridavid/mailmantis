@@ -37,7 +37,7 @@ NOT_FOUND = {"placement": "Not found", "tab": "", "labels": "", "gmail_id": "", 
 
 
 def fake_gemini(api_key, model, prompt, *, schema_def=None, research=False, search=True):
-    CALLS.append(["gemini", model, research, "<page_text>" in prompt, search])
+    CALLS.append(["gemini", model, research, "<page_text>" in prompt, search, "<conversation>" in prompt, "business's next email" in prompt])
     if model == "gemini-zero":
         raise app.GeminiError("Your Gemini key has no quota for gemini-zero", "zero_quota")
     if model == "gemini-nosearch" and research and search:
@@ -51,7 +51,7 @@ def fake_gemini(api_key, model, prompt, *, schema_def=None, research=False, sear
 
 
 def fake_smtp_send(**kw):
-    CALLS.append(["smtp_send", kw["from_email"], kw["from_name"], kw["to_email"], kw["subject"], kw.get("in_reply_to", "")])
+    CALLS.append(["smtp_send", kw["from_email"], kw["from_name"], kw["to_email"], kw["subject"], kw.get("in_reply_to", ""), kw.get("references") or []])
     return "fake-%d@example.com" % len(CALLS)
 
 
@@ -75,7 +75,8 @@ gmail_api.access_token = lambda refresh, client: "tok-" + refresh
 gmail_api.exchange_code = lambda code, uri, client: (CALLS.append(["exchange_code", uri, client[0]]) or
                                                      {"access_token": "acc", "refresh_token": "ref-" + code, "scope": PROFILE["scope"]})
 gmail_api.profile_email = lambda token: PROFILE["email"]
-gmail_api.find_message_placement = lambda token, mid: PLACEMENTS.get(mid.strip("<>"), NOT_FOUND)
+gmail_api.find_message_placement = lambda token, mid, **kw: (CALLS.append(["gmail_find", mid, kw.get("sender", ""), kw.get("subject", ""), kw.get("sent_after", 0)])
+                                                             or PLACEMENTS.get(mid.strip("<>"), NOT_FOUND))
 gmail_api.send = fake_gmail_send
 gmail_api.filter_status = lambda token, sender: {"never_spam": True, "important": False}
 gmail_api.create_never_spam_filter = fake_create_filter
@@ -126,8 +127,8 @@ def ms_create_filter(token, sender, focused=False, important=False):
 microsoft_api.create_filter = ms_create_filter
 oauth_check.check_google = lambda cid, secret, uri: [{"label": "Client ID and secret", "ok": True, "detail": cid}, {"label": "Redirect URI", "ok": True, "detail": uri}]
 oauth_check.check_microsoft = lambda cid, secret, uri, tenant="common": [{"label": "Application ID and secret", "ok": secret == "ms-secret", "detail": tenant}]
-gmail_api.not_spam = lambda token, mid: CALLS.append(["gmail_not_spam", mid])
-gmail_api.mark_important = lambda token, mid: CALLS.append(["gmail_important", mid])
+gmail_api.not_spam = lambda token, mid, gmail_id="": CALLS.append(["gmail_not_spam", mid, gmail_id])
+gmail_api.mark_important = lambda token, mid, gmail_id="": CALLS.append(["gmail_important", mid, gmail_id])
 app.smtp_send = fake_smtp_send
 app.verify_smtp = fake_verify_smtp
 

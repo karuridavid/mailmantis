@@ -157,6 +157,68 @@ for status, payload, words in ((401, {"error": {"message": "bad key"}}, "rejecte
         check(False, f"chat error {status} raises")
     except ai_clients.AIError as exc:
         check(words in str(exc), f"chat error {status}: {exc}")
+
+
+def raw_error(status, raw):
+    def handler(req, timeout=0):
+        CHAT.update(agent=req.headers.get("User-agent"))
+        raise urllib.error.HTTPError(req.full_url, status, "err", {}, io.BytesIO(raw))
+    return handler
+
+
+ai_clients.urllib.request.urlopen = raw_error(403, b"<html>error code: 1010</html>")
+try:
+    ai_clients.chat_request("groq", "gk", "openai/gpt-oss-20b", "Write")
+except ai_clients.AIError as exc:
+    check("blocked the request" in str(exc) and CHAT["agent"] == ai_clients.USER_AGENT, f"Groq: bot-filter 403 explained, own User-Agent sent: {exc}")
+ai_clients.urllib.request.urlopen = chat({"error": {"message": "The model is blocked at the project level", "code": "model_permission_blocked_project"}}, 403)
+try:
+    ai_clients.chat_request("groq", "gk", "openai/gpt-oss-20b", "Write")
+except ai_clients.AIError as exc:
+    check("blocked at the project level" in str(exc) and "project’s settings" in str(exc), f"Groq: model permission 403 shows Groq's reason: {exc}")
+
+ai_clients.urllib.request.urlopen = chat({"choices": [{"message": {"content": '{"body": "Hi"}'}}], "result": None})
+data, _ = ai_clients.chat_request("cloudflare", "cf", "@cf/meta/llama-3.3-70b-instruct-fp8-fast", "Write", account="abc123")
+check(data == {"body": "Hi"} and CHAT["url"] == "https://api.cloudflare.com/client/v4/accounts/abc123/ai/v1/chat/completions"
+      and CHAT["body"]["model"] == "@cf/meta/llama-3.3-70b-instruct-fp8-fast" and "response_format" not in CHAT["body"]
+      and CHAT["body"]["max_tokens"] == 4096, "Cloudflare Workers AI request")
+for status, payload, words in ((401, {"success": False, "errors": [{"code": 10000, "message": "Authentication error"}]}, "Workers AI Read"),
+                               (400, {"success": False, "errors": [{"code": 5007, "message": "No such model @cf/x"}]}, "doesn’t recognise the model"),
+                               (429, {"success": False, "errors": [{"code": 4006, "message": "you have used up your daily free allocation of 10,000 neurons"}]}, "no credit left")):
+    ai_clients.urllib.request.urlopen = chat(payload, status)
+    try:
+        ai_clients.chat_request("cloudflare", "cf", "@cf/x", "Write", account="abc123")
+        check(False, f"cloudflare error {status} raises")
+    except ai_clients.AIError as exc:
+        check(words in str(exc), f"cloudflare error {status}: {exc}")
+
+# Gmail: when the Message-ID search misses (the sending service rewrote it), sender + subject + time find the copy.
+import gmail_api  # noqa: E402
+GM = []
+
+
+def gmail(req, timeout=0):
+    url = urlparse(req.full_url)
+    query = parse_qs(url.query)
+    GM.append((url.path, query))
+    if url.path.endswith("/messages"):
+        found = "rfc822msgid" not in query["q"][0]
+        return Resp(json.dumps({"messages": [{"id": "m1"}]} if found else {}).encode())
+    headers = [{"name": "Message-ID", "value": "<rewritten@ses.example>"}, {"name": "From", "value": "Example Co <hi@example.com>"},
+               {"name": "Subject", "value": "Autumn  hours"}]
+    return Resp(json.dumps({"id": "m1", "threadId": "t1", "labelIds": ["SPAM"], "payload": {"headers": headers}}).encode())
+
+
+gmail_api.urlopen = gmail
+place = gmail_api.find_message_placement("t", "ours@example.com", sender="hi@example.com", subject="Autumn hours", sent_after=1_700_000_000)
+check(place["placement"] == "Spam" and place["gmail_id"] == "m1", "gmail: fallback search finds a message whose Message-ID was rewritten")
+fallback_q = GM[1][1]["q"][0]
+check('from:hi@example.com' in fallback_q and "after:1699999940" in fallback_q and 'subject:"Autumn hours"' in fallback_q, f"gmail: fallback query {fallback_q}")
+check(GM[2][1]["metadataHeaders"] == ["Message-ID", "From", "Subject"], "gmail: metadata headers sent as repeated parameters")
+GM.clear()
+check(gmail_api.find_message_placement("t", "ours@example.com")["placement"] == "Not found" and len(GM) == 1, "gmail: no fallback without sender details")
+gmail_api.mark_important("t", "ours@example.com", "saved-id")
+check(GM[-1][0].endswith("/messages/saved-id/modify") and len(GM) == 2, "gmail: actions reuse the saved Gmail ID")
 app.site_reader.read_site = lambda urls, **kw: ("", [])
 try:
     app.summarize_website({"provider": "groq", "key": "k", "model": "m"}, "blocked.example", ["https://blocked.example"])

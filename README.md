@@ -2,7 +2,7 @@
 
 **Know where your domain’s email lands.**
 
-Mail Mantis is a small, self-hosted dashboard for warming up and monitoring a custom domain with inboxes you own: Gmail and Google Workspace, Outlook and Microsoft 365, Yahoo, iCloud, AOL or any IMAP inbox. Draft ordinary emails with AI (Gemini, Claude, OpenAI, OpenRouter or Groq, or any chat app by copy and paste), send them yourself, see whether they landed in the inbox, a tab or spam, and reply from the same place.
+Mail Mantis is a small, self-hosted dashboard for warming up and monitoring a custom domain with inboxes you own: Gmail and Google Workspace, Outlook and Microsoft 365, Yahoo, iCloud, AOL or any IMAP inbox. Draft ordinary emails with AI (Gemini, Claude, OpenAI, OpenRouter, Groq or Cloudflare Workers AI, or any chat app by copy and paste), send them yourself, see whether they landed in the inbox, a tab or spam, and reply from the same place.
 
 It is manual by design:
 - **Sending:** nothing is sent until you press Send.
@@ -38,14 +38,14 @@ The full guide covers Google OAuth setup, HTTPS, Vercel + Neon, and configuratio
 2. **Brief:** AI reads your public website and drafts a summary of the business. You correct it, or write it yourself.
 3. **Draft and send:** AI writes a different, ordinary email for each inbox. You pick the model each time. You edit each one, mark it ready, and send it.
 4. **Placement:** the app finds the exact `Message-ID` in the seed inbox and reads its labels. It reports Inbox (and the tab), Spam, Other folder, or Not found yet.
-5. **Reply:** reply from the seed inbox, in the same thread. You write the reply or have AI draft it.
+5. **Reply:** reply from the seed inbox, in the same thread. Once the seed has replied, the domain can answer back, and the conversation can go back and forth. You write each reply or have AI draft it from the conversation so far.
 
 When you choose, you can also act on a sent email: move it out of spam, or mark it important. These actions are not automatic.
 
 | Inbox | Connects with | Not spam | Important | Filters |
 | --- | --- | --- | --- | --- |
-| Gmail / Workspace | Google sign-in | Remove `SPAM` label | `IMPORTANT` label | Never send to Spam, Mark important |
-| Outlook / Microsoft 365 | Microsoft sign-in | Graph `markAsNotJunk` | High importance | Always Focused, Mark important rule |
+| Gmail / Workspace | Google sign-in | Remove `SPAM` label | `IMPORTANT` label | Never send to Spam (also marks important) |
+| Outlook / Microsoft 365 | Microsoft sign-in | Graph `markAsNotJunk` | High importance | Always Focused (also adds the Mark important rule) |
 | Yahoo, iCloud, AOL, IMAP | App password | Move to INBOX | `\Flagged` | Not available over IMAP |
 
 ## AI models
@@ -59,6 +59,7 @@ Settings → **AI writing** takes a key for any of these. Each draft, reply and 
 | OpenAI | Paid API credit | No, uses the page text the server fetched |
 | OpenRouter | Free models (`:free`, `openrouter/free`) | No |
 | Groq | Free tier | No |
+| Cloudflare Workers AI | Free daily allowance (needs your account ID and a Workers AI API token) | No |
 
 A Claude Pro or ChatGPT Plus plan doesn't include API use. To use one anyway, pick **Chat app**: Mail Mantis gives you the prompt, you paste it into the chat app and paste the answer back.
 
@@ -74,7 +75,7 @@ Invite people under **People** to lend their inboxes. Member accounts can only c
 | `api/app.py` | API: one `POST /api/app` endpoint dispatching on `action`, plus the Google OAuth callback |
 | `gmail_api.py`, `microsoft_api.py`, `imap_box.py` | Mailbox clients for Gmail, Microsoft Graph and IMAP |
 | `site_reader.py` | Reads a business website's text for the AI brief |
-| `ai_clients.py` | Claude and OpenAI-compatible (OpenAI, OpenRouter, Groq) clients; Gemini is in `api/app.py` |
+| `ai_clients.py` | Claude and OpenAI-compatible (OpenAI, OpenRouter, Groq, Cloudflare) clients; Gemini is in `api/app.py` |
 | `oauth_check.py` | Validates Google and Microsoft app keys |
 | `server.py` | Standalone server used by Docker; serves the dashboard and API |
 | `site/` | Public project website (static) |
