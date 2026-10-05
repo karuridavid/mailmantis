@@ -4,9 +4,9 @@
 
 Mail Mantis is a small, self-hosted dashboard for warming up and monitoring a custom domain with inboxes you own: Gmail and Google Workspace, Outlook and Microsoft 365, Yahoo, iCloud, AOL or any IMAP inbox. Draft ordinary emails with AI (Gemini, Claude, OpenAI, OpenRouter, Groq or Cloudflare Workers AI, or any chat app by copy and paste), send them yourself, see whether they landed in the inbox, a tab or spam, and reply from the same place.
 
-It is manual by design:
-- **Sending:** nothing is sent until you press Send.
-- **Replies:** seed inboxes never reply on their own.
+It is manual by default:
+- **Sending:** nothing is sent until you press Send, unless you turn on autopilot.
+- **Replies:** seed inboxes only reply when you send a reply or autopilot is on.
 - **Placement checks:** these only read Gmail labels. Messages are never moved.
 
 ![Mail Mantis overview](site/assets/shots/overview-light.jpg)
@@ -41,6 +41,13 @@ The full guide covers Google OAuth setup, HTTPS, Vercel + Neon, and configuratio
 5. **Reply:** reply from the seed inbox, in the same thread. Once the seed has replied, the domain can answer back, and the conversation can go back and forth. You write each reply or have AI draft it from the conversation so far.
 
 When you choose, you can also act on a sent email: move it out of spam, or mark it important. These actions are not automatic.
+
+### Autopilot
+
+Turn it on from the Overview page and it runs once a day until you pause it. Each run first replies once in each of its open conversations: the seed replies, then your domain, then the seed again. Then it writes and sends new emails (1 to 10 a day) to the seed inboxes that have waited longest. It writes with your default AI service and can move its own emails out of spam before replying. **Run now** does today's run straight away.
+
+- **Vercel:** set a `CRON_SECRET` environment variable (any long random string) and redeploy. `vercel.json` schedules `/api/cron` at 09:00 UTC.
+- **Docker / `server.py`:** the server runs it itself, from 09:00 UTC.
 
 | Inbox | Connects with | Not spam | Important | Filters |
 | --- | --- | --- | --- | --- |

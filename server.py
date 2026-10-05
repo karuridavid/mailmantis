@@ -12,6 +12,9 @@ import mimetypes
 import os
 import secrets
 import sys
+import threading
+import time
+from datetime import datetime, timezone
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -111,6 +114,29 @@ def announce_setup_key() -> None:
         print(f"First sign-in: open the dashboard and use this one-time setup key: {os.environ['ADMIN_SETUP_KEY']}", flush=True)
 
 
+def autopilot_timer() -> None:
+    """The self-hosted stand-in for Vercel Cron: from AUTO_HOUR (UTC) on, try the daily run every 15 minutes.
+
+    run_autopilot claims the day, so it sends once a day however often this wakes, and does nothing while paused.
+    """
+    while True:
+        time.sleep(900)
+        if datetime.now(timezone.utc).hour < app.AUTO_HOUR:
+            continue
+        conn = None
+        try:
+            conn = app.db()
+            app.schema(conn)
+            result = app.run_autopilot(conn)
+            if "skipped" not in result:
+                print(f"Autopilot: {result['sent']} sent, {result['replies']} replies, {len(result['errors'])} problems", flush=True)
+        except Exception as exc:
+            print(f"Autopilot run failed ({type(exc).__name__})", flush=True)
+        finally:
+            if conn:
+                conn.close()
+
+
 def main() -> None:
     mimetypes.add_type("text/javascript", ".js")
     mimetypes.add_type("font/woff2", ".woff2")
@@ -118,6 +144,8 @@ def main() -> None:
     port = int(os.getenv("PORT", "8080"))
     host = os.getenv("HOST", "0.0.0.0")
     announce_setup_key()
+    os.environ["MAIL_MANTIS_SCHEDULER"] = "1"
+    threading.Thread(target=autopilot_timer, daemon=True).start()
     print(f"Mail Mantis listening on http://{'localhost' if host == '0.0.0.0' else host}:{port}", flush=True)
     ThreadingHTTPServer((host, port), Handler).serve_forever()
 

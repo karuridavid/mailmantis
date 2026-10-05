@@ -1,7 +1,8 @@
 """Authenticated app API. Requires Postgres plus an encryption and setup key.
 
-Every send in this app is started by the admin. Nothing is scheduled and seed
-accounts never reply on their own.
+Every send is started by the admin, or by autopilot once the admin switches it
+on: a daily run that sends new domain emails and moves its own conversations
+forward one reply at a time. Seed accounts never reply outside those two paths.
 """
 from __future__ import annotations
 
@@ -130,6 +131,7 @@ def schema(conn) -> None:
         "ALTER TABLE qa_drafts ADD COLUMN IF NOT EXISTS inbox_tab TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE qa_drafts ADD COLUMN IF NOT EXISTS gmail_id TEXT NOT NULL DEFAULT ''",
         "ALTER TABLE qa_drafts ADD COLUMN IF NOT EXISTS gmail_thread_id TEXT NOT NULL DEFAULT ''",
+        "ALTER TABLE qa_drafts ADD COLUMN IF NOT EXISTS auto BOOLEAN NOT NULL DEFAULT FALSE",
         # Earlier versions stored the placement result in status. Status is now
         # draft/ready/sent and placement is kept separately.
         "UPDATE qa_drafts SET status='sent' WHERE status IN ('inbox','spam','not_found','other_folder')",
@@ -211,7 +213,7 @@ def imap_cfg(seed: dict) -> dict:
 
 
 DRAFT_COLUMNS = ("id,kind,parent_id,seed_email,from_email,to_email,subject,body,status,message_id,sent_at,placement,"
-                 "inbox_tab,gmail_labels,checked_at,gmail_id,gmail_thread_id,created_at,updated_at")
+                 "inbox_tab,gmail_labels,checked_at,gmail_id,gmail_thread_id,created_at,updated_at,auto")
 
 
 def draft_dict(row) -> dict:
@@ -823,6 +825,7 @@ def read_config(conn, user: dict, handler=None) -> dict:
             "ai": {"default": default_ai if default_entry else "none", "providers": providers},
             "ai_provider": default_ai, "ai_model": settings.get(ai_setting(default_ai, "model"), "") if default_entry else "",
             "has_ai_key": bool(default_entry and default_entry["ready"]), "default_model": DEFAULT_MODEL,
+            "autopilot": autopilot_config(conn),
             "website_summary": sender["brief"] if sender else "",
             "storage_ready": True, "google": google_public, "microsoft": microsoft_public, "people": people, "invites": invites,
             "imap_presets": {k: {"label": v["label"], "help": v["help"], "imap_host": v["imap_host"], "imap_port": v["imap_port"],
@@ -1490,6 +1493,202 @@ def act_message_action(conn, body, user, req=None):
     return {"ok": True, "message": f"{done}. Now: {result['placement']}" + (f" · {result['tab']}" if result.get("tab") else ""), "result": result}
 
 
+# ---------------------------------------------------------------- autopilot
+# A daily run (Vercel cron, or the self-hosted server's timer) that keeps mail flowing until it's paused:
+# first it moves each of its open conversations on by one reply, then it sends new domain emails to the
+# seeds that have gone longest without one. A conversation is the domain email plus up to three replies:
+# seed, domain, seed. Everything it writes goes through the same draft, AI and send steps as the dashboard.
+
+AUTO_REPLIES = 3
+AUTO_MAX_PER_DAY = 10
+AUTO_STEPS = 8  # Conversation replies per run, so a run stays well inside the function time limit.
+AUTO_HOUR = 9   # UTC hour the self-hosted timer runs at; Vercel's schedule is in vercel.json.
+
+
+def autopilot_config(conn) -> dict:
+    settings = get_settings(conn, "autopilot_enabled", "autopilot_per_day", "autopilot_rescue", "autopilot_status")
+    try:
+        last = json.loads(settings.get("autopilot_status") or "null")
+    except ValueError:
+        last = None
+    return {"enabled": settings.get("autopilot_enabled") == "1",
+            "per_day": int(settings.get("autopilot_per_day") or 1),
+            "rescue": settings.get("autopilot_rescue", "1") != "0",
+            "scheduled": bool(os.getenv("CRON_SECRET", "").strip() or os.getenv("MAIL_MANTIS_SCHEDULER")),
+            "last": last}
+
+
+def claim_today(conn) -> bool:
+    """Mark today's run as taken. False if another run already took it (crons can fire twice)."""
+    today = datetime.now(timezone.utc).date().isoformat()
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO app_settings(name,value) VALUES('autopilot_last_date',%s) ON CONFLICT(name) DO UPDATE "
+                    "SET value=EXCLUDED.value WHERE app_settings.value<>EXCLUDED.value RETURNING 1", (today,))
+        claimed = cur.fetchone() is not None
+    conn.commit()
+    return claimed
+
+
+def auto_send(conn, draft_id: str) -> None:
+    """Write (for replies), mark ready and send one draft. A failed draft is deleted so nothing half-done is left."""
+    try:
+        if load_draft(conn, draft_id)["kind"] == "reply":
+            act_write_with_gemini(conn, {"id": draft_id}, None)
+        act_set_draft_status(conn, {"id": draft_id, "status": "ready"}, None)
+        act_send_draft(conn, {"id": draft_id}, None)
+    except Exception:
+        conn.rollback()
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM qa_drafts WHERE id=%s AND status IN ('draft','ready')", (draft_id,))
+        conn.commit()
+        raise
+
+
+def auto_step(conn, root: dict, rescue: bool, tokens: dict) -> str:
+    """Move one conversation on by one reply. Returns what happened: replied, rescued, done or a reason it waited."""
+    messages = thread_messages(conn, root)
+    if len(messages) - 1 >= AUTO_REPLIES:
+        return "done"
+    if one(conn, "SELECT 1 FROM qa_drafts WHERE parent_id=%s AND status IN ('draft','ready')", (root["id"],)):
+        return "waiting: a reply draft is open"
+    seed = load_seed(conn, email=root["seed_email"])
+    if not seed or not seed["enabled"]:
+        return "waiting: seed paused or removed"
+    rescued = False
+    if len(messages) == 1:
+        placement = check_one(conn, root, tokens)["placement"]
+        if placement == "Not found":
+            return "waiting: not found in the inbox"
+        if placement == "Spam":
+            if not rescue:
+                return "waiting: in spam"
+            act_message_action(conn, {"id": root["id"], "op": "not_spam"}, None)
+            rescued = True
+    seed_turn = len(messages) == 1 or from_domain(messages[-1])
+    if seed_turn and seed_kind(seed) == "google" and not seed["gmail_send_enabled"]:
+        return "waiting: seed can't send replies"
+    draft_id = act_create_draft(conn, {"parent_id": root["id"], **({} if seed_turn else {"from": "domain"})}, None)["id"]
+    auto_send(conn, draft_id)
+    return "rescued and replied" if rescued else "replied"
+
+
+def run_autopilot(conn, *, force: bool = False) -> dict:
+    """The daily run. force (Run now) ignores the pause and the once-a-day claim."""
+    cfg = autopilot_config(conn)
+    if not force and not cfg["enabled"]:
+        return {"ok": True, "skipped": "Autopilot is paused"}
+    if not claim_today(conn) and not force:
+        return {"ok": True, "skipped": "Already ran today"}
+    log = {"at": datetime.now(timezone.utc).isoformat(), "manual": force, "sent": 0, "replies": 0, "rescued": 0, "errors": []}
+
+    def failed(what: str, exc: Exception) -> None:
+        conn.rollback()
+        message = str(exc) if isinstance(exc, (ValueError, ai_clients.AIError)) else type(exc).__name__
+        log["errors"].append(f"{what}: {message}"[:240])
+        print(f"Autopilot {what} failed ({type(exc).__name__})", flush=True)
+
+    try:
+        require_sender(conn)
+        ai_config(conn)
+    except Exception as exc:
+        failed("Setup", exc)
+    else:
+        with conn.cursor() as cur:
+            cur.execute(f"SELECT {DRAFT_COLUMNS} FROM qa_drafts WHERE kind='domain' AND auto AND status='sent' "
+                        "AND sent_at > NOW() - INTERVAL '10 days' ORDER BY sent_at")
+            roots = [draft_dict(r) for r in cur.fetchall()]
+        steps, tokens = 0, {}
+        for root in roots:
+            if steps >= AUTO_STEPS:
+                break
+            try:
+                result = auto_step(conn, root, cfg["rescue"], tokens)
+            except Exception as exc:
+                failed(f"Reply to “{root['subject']}”", exc)
+                steps += 1
+                continue
+            if "replied" in result:
+                steps += 1
+                log["replies"] += 1
+                log["rescued"] += result.startswith("rescued")
+        with conn.cursor() as cur:
+            cur.execute("SELECT s.id FROM seed_accounts s LEFT JOIN (SELECT seed_email, MAX(sent_at) AS last FROM qa_drafts "
+                        "WHERE kind='domain' AND status='sent' GROUP BY seed_email) d ON d.seed_email=s.email "
+                        "WHERE s.enabled ORDER BY d.last NULLS FIRST, random() LIMIT %s", (cfg["per_day"],))
+            seed_ids = [r[0] for r in cur.fetchall()]
+        if not seed_ids:
+            log["errors"].append("No enabled seed inboxes to send to")
+        else:
+            try:
+                ids = act_generate_drafts(conn, {"seed_ids": seed_ids}, None)["ids"]
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE qa_drafts SET auto=TRUE WHERE id = ANY(%s)", (ids,))
+                conn.commit()
+            except Exception as exc:
+                failed("Writing new emails", exc)
+                ids = []
+            for draft_id in ids:
+                try:
+                    auto_send(conn, draft_id)
+                    log["sent"] += 1
+                except Exception as exc:
+                    failed("Sending a new email", exc)
+    set_setting(conn, "autopilot_status", json.dumps(log))
+    conn.commit()
+    return {"ok": True, **log}
+
+
+def act_save_autopilot(conn, body, user, req=None):
+    try:
+        per_day = int(body.get("per_day", 1))
+    except (TypeError, ValueError):
+        raise ValueError("Choose how many emails to send a day") from None
+    if not 1 <= per_day <= AUTO_MAX_PER_DAY:
+        raise ValueError(f"Choose between 1 and {AUTO_MAX_PER_DAY} emails a day")
+    enabled = body.get("enabled") is True
+    if enabled:
+        require_sender(conn)
+        ai_config(conn)  # Autopilot writes with the default AI service, so it must be set up.
+    set_setting(conn, "autopilot_enabled", "1" if enabled else "0")
+    set_setting(conn, "autopilot_per_day", str(per_day))
+    set_setting(conn, "autopilot_rescue", "0" if body.get("rescue") is False else "1")
+    conn.commit()
+    return {"ok": True, "message": "Autopilot is on" if enabled else "Autopilot paused"}
+
+
+def act_run_autopilot(conn, body, user, req=None):
+    result = run_autopilot(conn, force=True)
+    parts = [plural_text(result["sent"], "email") + " sent", plural_text(result["replies"], "reply", "replies") + " sent"]
+    if result["rescued"]:
+        parts.append(f"{result['rescued']} moved out of spam")
+    return {**result, "message": ", ".join(parts) + (f". {len(result['errors'])} problem(s): see Autopilot" if result["errors"] else "")}
+
+
+def plural_text(n: int, word: str, many: str = "") -> str:
+    return f"{n} {word if n == 1 else many or word + 's'}"
+
+
+def cron_request(handler) -> None:
+    """GET /api/cron from Vercel Cron, which sends Authorization: Bearer $CRON_SECRET."""
+    secret = os.getenv("CRON_SECRET", "").strip()
+    sent = handler.headers.get("Authorization", "")
+    if not secret or not hmac.compare_digest(sent.encode(), ("Bearer " + secret).encode()):
+        reply(handler, 401, {"error": "Not allowed"})
+        return
+    conn = None
+    try:
+        conn = db(); schema(conn)
+        reply(handler, 200, run_autopilot(conn))
+    except Exception as exc:
+        if conn:
+            conn.rollback()
+        traceback.print_exc()
+        reply(handler, 500, {"error": type(exc).__name__})
+    finally:
+        if conn:
+            conn.close()
+
+
 def act_connect_imap(conn, body, user, req=None):
     """Connect a Yahoo, AOL, iCloud or other IMAP inbox with an app password. Sign-in is tested first."""
     provider = body.get("provider")
@@ -1677,7 +1876,7 @@ ACTIONS = {
     "connect_imap": act_connect_imap, "message_action": act_message_action,
     "check_oauth": act_check_oauth, "test_gemini": act_test_gemini, "create_invite": act_create_invite, "revoke_invite": act_revoke_invite,
     "remove_person": act_remove_person, "invite_link": act_invite_link, "renew_invite": act_renew_invite,
-    "change_password": act_change_password,
+    "change_password": act_change_password, "save_autopilot": act_save_autopilot, "run_autopilot": act_run_autopilot,
 }
 
 
@@ -1827,6 +2026,9 @@ class handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         parsed = urlparse(self.path)
+        if parsed.path == "/api/cron":
+            cron_request(self)
+            return
         if parsed.path not in ("/api/app", "/api/google_oauth_callback", "/api/microsoft_oauth_callback"):
             reply(self, 404, {"error": "Not found"})
             return

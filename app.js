@@ -296,6 +296,27 @@ const empty = (ico, title, text, action = '') => `<div class="empty">${icon(ico)
 
 // ------------------------------------------------------------------ overview
 
+// Autopilot: a daily run that sends new emails and moves its conversations on by one reply each, until paused.
+function autopilotCard() {
+  const a = S.autopilot;
+  if (!a) return '';
+  const last = a.last;
+  const lastText = !last ? 'Hasn’t run yet.'
+    : `Last ${last.manual ? 'manual ' : ''}run ${ago(last.at)}: ${plural(last.sent, 'email')} and ${plural(last.replies, 'reply', 'replies')} sent${last.rescued ? `, ${last.rescued} moved out of spam` : ''}.`;
+  const problems = last && last.errors.length ? `<ul class="plain-list autopilot-errors">${last.errors.map(e => `<li>${esc(e)}</li>`).join('')}</ul>` : '';
+  const per = `<select class="input" data-autopilot="per_day" aria-label="Emails a day">${Array.from({length: 10}, (_, i) => i + 1).map(n =>
+    `<option value="${n}" ${a.per_day === n ? 'selected' : ''}>${plural(n, 'new email')} a day</option>`).join('')}</select>`;
+  return `<div class="card"><div class="card-head"><h2>Autopilot</h2>${a.enabled ? '<span class="pill s-inbox">On</span>' : '<span class="pill s-draft">Paused</span>'}
+      <span class="sub">${a.enabled ? 'Runs once a day' + (a.scheduled ? ' around 09:00 UTC' : '') : 'Nothing is sent automatically'}</span></div>
+    <div class="card-body"><p class="muted small" style="margin:0 0 12px">Each day it replies once in each of its open conversations (seed, then your domain, then the seed again), then writes and sends new emails to the seed inboxes that have waited longest. It writes with your default AI service.</p>
+      ${a.scheduled ? '' : `<div class="callout warn" style="margin-bottom:12px">${icon('alert')}<div>The daily schedule isn’t set up on this server: add a <code>CRON_SECRET</code> environment variable and redeploy. Run now still works.</div></div>`}
+      <div class="row-actions" style="align-items:center">${per}
+        <label class="check-line" style="margin:0"><input type="checkbox" class="checkbox" data-autopilot="rescue" ${a.rescue ? 'checked' : ''}> Move its emails out of spam before replying</label></div>
+      <p class="small muted" style="margin:12px 0 0">${esc(lastText)}</p>${problems}</div>
+    <div class="card-foot">${btn('autopilot-toggle', a.enabled ? 'Pause' : 'Turn on', {cls: a.enabled ? 'sm' : 'sm primary', ico: a.enabled ? 'pause' : 'play'})}
+      ${btn('autopilot-run', 'Run now', {cls: 'sm ghost', ico: 'send', title: 'Run today’s exchange now. The scheduled run then skips today'})}</div></div>`;
+}
+
 function overview() {
   const DAY = 86400000, now = Date.now();
   const inWindow = (d, from, to) => ms(d.sent_at) >= now - from * DAY && ms(d.sent_at) < now - to * DAY;
@@ -327,7 +348,7 @@ function overview() {
 
   return header('Overview', S.sender ? esc(S.sender.domain) : '',
       btn('refresh', 'Refresh placement', {ico: 'refresh', cls: 'icon-sm', title: 'Refresh placement'}) + btn('compose', 'Write emails', {ico: 'plus', cls: 'primary'})) +
-    `<div class="page"><div class="stack">${setup}
+    `<div class="page"><div class="stack">${setup}${autopilotCard()}
       <div class="kpis">
         ${kpi('Inbox rate', 'inbox', rate === null ? '–' : Math.round(rate) + '%', delta(rate, rateOf(prev), {pct: true}))}
         ${kpi('Emails sent', 'send', week.length, delta(week.length, prev.length, {neutral: true}))}
@@ -459,7 +480,7 @@ function row(d) {
   return `<a class="mail-row ${ui.sel === d.id ? 'on' : ''}" href="#/emails/${esc(d.id)}" role="listitem">${avatar(d.seed_email)}
     <div style="min-width:0"><div class="top"><span class="who">${esc(who)}</span><span class="when" title="${esc(fullDate(d.sent_at || d.updated_at))}">${ago(d.sent_at || d.updated_at)}</span></div>
     <div class="subj">${esc(editVal(d, 'subject') || '(no subject)')}</div>
-    <div class="meta">${pill(d)}${reps.length ? `<span>${icon('reply')} ${reps.length}</span>` : ''}${isDirty(d) ? '<span style="color:var(--tab)">Unsaved</span>' : ''}</div></div></a>`;
+    <div class="meta">${pill(d)}${d.auto ? '<span class="chip">Auto</span>' : ''}${reps.length ? `<span>${icon('reply')} ${reps.length}</span>` : ''}${isDirty(d) ? '<span style="color:var(--tab)">Unsaved</span>' : ''}</div></div></a>`;
 }
 
 function composerBar(d) {
@@ -1002,6 +1023,21 @@ const ACTIONS = {
   },
   filter(el) { ui.filter = el.dataset.v; if (ui.page === 'emails') render(true); },
   async refresh(el) { await withBusy(el, () => refreshPlacements(false)); },
+  async 'autopilot-toggle'(el) {
+    const on = !S.autopilot.enabled;
+    if (on && !await confirmBox({title: 'Turn on autopilot?', text: `Every day it sends ${plural(S.autopilot.per_day, 'new email')} from ${S.sender ? S.sender.email : 'your domain'} and replies in its open conversations, from your seed inboxes and your domain, without asking first.
+
+You can pause it here at any time.`, ok: 'Turn on'})) return;
+    await withBusy(el, async () => toast((await saveAutopilot({enabled: on})).message));
+  },
+  async 'autopilot-run'(el) {
+    if (!await confirmBox({title: 'Run autopilot now?', text: 'Sends today’s replies and new emails now. This can take a minute or two. The scheduled run then skips today.', ok: 'Run now'})) return;
+    await withBusy(el, async () => {
+      const r = await api('run_autopilot');
+      await load();
+      toast(r.message, r.errors.length ? 'err' : 'ok');
+    });
+  },
   async copy(el) { try { await navigator.clipboard.writeText(el.dataset.v); toast('Copied'); } catch (e) { toast('Copy failed. Select the text instead', 'err'); } },
 
   compose() { composeDialog(); },
@@ -1368,7 +1404,18 @@ root.addEventListener('change', async e => {
       toast(p ? p.label + ' is now the default' : 'No default AI');
     } catch (err) { toast(err.message, 'err'); }
   }
+  if ('autopilot' in el.dataset) {
+    try { await saveAutopilot({[el.dataset.autopilot]: el.type === 'checkbox' ? el.checked : Number(el.value)}); }
+    catch (err) { toast(err.message, 'err'); await load(); }
+  }
 });
+
+async function saveAutopilot(change) {
+  const a = S.autopilot;
+  const r = await api('save_autopilot', {enabled: a.enabled, per_day: a.per_day, rescue: a.rescue, ...change});
+  await load();
+  return r;
+}
 
 document.addEventListener('keydown', e => {
   if (!S || dialog.open || S.role === 'member') return;

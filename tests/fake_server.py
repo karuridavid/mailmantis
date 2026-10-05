@@ -17,6 +17,7 @@ ROOT = Path(__file__).resolve().parent.parent
 os.environ.setdefault("DATABASE_URL", "postgresql://postgres:dev@localhost:55432/postgres")
 os.environ.setdefault("APP_ENCRYPTION_KEY", "q3tjJ3o2YyKpWQ0P3m5JvE8b3o0w7Z2W1m8Wm4WlGr0=")
 os.environ.setdefault("ADMIN_SETUP_KEY", "setup-key-123")
+os.environ.setdefault("CRON_SECRET", "cron-test-secret")
 os.environ.setdefault("DATA_DIR", str(ROOT / ".data-test"))
 os.environ.setdefault("IMAP_INSECURE_TLS", "1")  # IMAP inboxes on localhost use GreenMail's self-signed certificate.
 sys.path.insert(0, str(ROOT))

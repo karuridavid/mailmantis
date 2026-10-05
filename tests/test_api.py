@@ -430,6 +430,57 @@ status, loc = oauth("connect", name="")
 check(loc == "/?google=already_connected&reason=jane%40gmail.com", "reconnecting the same Gmail is reported")
 check(ms_oauth("connect") == "/?google=already_connected&reason=sam%40outlook.com", "reconnecting the same Outlook inbox is reported")
 
+# --- autopilot: daily new emails, and its conversations move on one reply per run
+for s in call("get_config")["seeds"]:
+    call("set_seed_enabled", id=s["id"], enabled=s["email"] == "jane@gmail.com")
+cfg = call("get_config")
+check(cfg["autopilot"]["enabled"] is False and cfg["autopilot"]["scheduled"] and cfg["autopilot"]["last"] is None, "autopilot starts paused")
+call("save_autopilot", expect=400, enabled=True, per_day=11)
+call("save_autopilot", enabled=True, per_day=1, rescue=True)
+
+
+def cron(secret="cron-test-secret"):
+    req = urllib.request.Request(BASE + "/api/cron", headers={"Authorization": "Bearer " + secret} if secret else {})
+    try:
+        resp = urllib.request.urlopen(req)
+        return resp.status, json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read())
+
+
+def auto_roots():
+    return sorted([d for d in call("get_config")["drafts"] if d["auto"]], key=lambda d: d["sent_at"])
+
+
+def thread(root_id):
+    return sorted([d for d in call("get_config")["drafts"] if d["parent_id"] == root_id], key=lambda d: d["sent_at"])
+
+
+check(cron(None)[0] == 401 and cron("wrong")[0] == 401, "cron needs the secret")
+status, r = cron()
+check(status == 200 and r["sent"] == 1 and r["replies"] == 0 and not r["errors"], f"daily run sends a new email {r}")
+first = auto_roots()[0]
+check(first["status"] == "sent" and first["seed_email"] == "jane@gmail.com", "autopilot email sent to an enabled seed")
+check(cron()[1].get("skipped") == "Already ran today", "a second cron the same day does nothing")
+hook("placement", message_id=first["message_id"], result={"placement": "Spam", "tab": "", "labels": "SPAM", "gmail_id": "ga1", "thread_id": "ta1"})
+r = call("run_autopilot")
+check(r["replies"] == 1 and r["rescued"] == 1 and r["sent"] == 1, f"run now: rescued from spam, seed replied, new email sent {r['message']}")
+check(calls("gmail_not_spam")[-1][1:] == [first["message_id"], "ga1"], "moved out of spam with the saved Gmail ID")
+t = thread(first["id"])
+check(len(t) == 1 and t[0]["from_email"] == "jane@gmail.com" and t[0]["status"] == "sent", "seed's reply is in the thread")
+r = call("run_autopilot")
+t = thread(first["id"])
+check(r["replies"] == 1 and len(t) == 2 and t[1]["from_email"] == first["from_email"], "next run: the domain replies")
+check(calls("smtp_send")[-2][5] == t[0]["message_id"], "domain reply answers the seed's reply")
+call("run_autopilot")
+t = thread(first["id"])
+check(len(t) == 3 and t[2]["from_email"] == "jane@gmail.com", "next run: the seed replies again")
+r = call("run_autopilot")
+check(r["replies"] == 0 and len(thread(first["id"])) == 3, "conversation ends after three replies; unfound emails wait")
+check(call("get_config")["autopilot"]["last"]["sent"] == 1, "last run shown on the dashboard")
+call("save_autopilot", enabled=False, per_day=1)
+check(cron()[1].get("skipped") == "Autopilot is paused", "paused autopilot sends nothing")
+
 # --- removed actions are gone
 call("run_check", expect=400)
 call("rotate_cron", expect=400)

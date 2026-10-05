@@ -9,8 +9,17 @@
     },
     "api/microsoft_oauth_callback.py": {
       "maxDuration": 60
+    },
+    "api/cron.py": {
+      "maxDuration": 300
     }
   },
+  "crons": [
+    {
+      "path": "/api/cron",
+      "schedule": "0 9 * * *"
+    }
+  ],
   "headers": [
     {
       "source": "/(.*)",
