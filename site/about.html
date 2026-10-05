@@ -29,20 +29,21 @@
 
     <h2 id="why">Why it exists</h2>
     <p>When you start sending from a new domain, Gmail has no history to go on. The usual advice is to send a few normal emails to people who will open and reply, check where they land, and fix authentication when they land in Spam. Doing that by hand means juggling an SMTP account, several Gmail tabs and a spreadsheet.</p>
-    <p>Mail Mantis puts that loop in one private dashboard. It deliberately stops short of automation: there are no schedules, no auto-replies and no message moving. Every send and every reply is a person’s decision, so what you measure is how Gmail treats a real sender.</p>
+    <p>Mail Mantis puts that loop in one private dashboard. By default every send and every reply is a person’s decision, so what you measure is how inbox providers treat a real sender. When doing it daily by hand gets old, <b>autopilot</b> takes over: once a day it sends a few ordinary emails and moves each of its conversations on by one reply, until you pause it. It still only writes to inboxes you own or that friends lend you, and it keeps volumes small on purpose.</p>
 
     <h2 id="architecture">Architecture</h2>
-    <div class="diagram"><svg viewBox="0 0 720 250" role="img" aria-label="Browser talks to the Mail Mantis API, which uses Postgres, SMTP, the Gmail API and Gemini">
+    <div class="diagram"><svg viewBox="0 0 720 250" role="img" aria-label="Browser talks to the Mail Mantis API, which uses Postgres, SMTP, the seed inboxes and an AI service">
       <rect class="box" x="10" y="95" width="130" height="60" rx="10"/><text x="75" y="122" text-anchor="middle" font-size="14" font-weight="600">Dashboard</text><text x="75" y="141" text-anchor="middle" font-size="12" class="muted-t">HTML · CSS · JS</text>
       <rect class="box" x="220" y="85" width="170" height="80" rx="10"/><text x="305" y="117" text-anchor="middle" font-size="14" font-weight="600">Mail Mantis API</text><text x="305" y="136" text-anchor="middle" font-size="12" class="muted-t">Python · one endpoint</text><text x="305" y="152" text-anchor="middle" font-size="12" class="muted-t">Docker or Vercel</text>
       <line x1="140" y1="125" x2="220" y2="125"/>
       <rect class="box" x="480" y="10" width="220" height="44" rx="10"/><text x="590" y="37" text-anchor="middle" font-size="13">Postgres: settings, drafts, results</text>
       <rect class="box" x="480" y="68" width="220" height="44" rx="10"/><text x="590" y="95" text-anchor="middle" font-size="13">SMTP: your domain sender</text>
-      <rect class="box" x="480" y="126" width="220" height="44" rx="10"/><text x="590" y="153" text-anchor="middle" font-size="13">Gmail API: seed inboxes</text>
-      <rect class="box" x="480" y="184" width="220" height="44" rx="10"/><text x="590" y="211" text-anchor="middle" font-size="13">Gemini: drafts and brief</text>
+      <rect class="box" x="480" y="126" width="220" height="44" rx="10"/><text x="590" y="153" text-anchor="middle" font-size="13">Gmail, Graph, IMAP: seed inboxes</text>
+      <rect class="box" x="480" y="184" width="220" height="44" rx="10"/><text x="590" y="211" text-anchor="middle" font-size="13">Your AI service: drafts and brief</text>
       <path d="M390 115 C 440 115, 430 32, 480 32"/><path d="M390 120 C 440 120, 440 90, 480 90"/><path d="M390 130 C 440 130, 440 148, 480 148"/><path d="M390 140 C 440 140, 430 206, 480 206"/>
     </svg></div>
-    <p>The dashboard is a static page that calls a single <code>POST /api/app</code> endpoint with an <code>action</code>. The API stores everything in Postgres and is the only part that talks to SMTP, Gmail and Gemini. Placement is found by searching the seed inbox for the exact <code>Message-ID</code> that was sent and reading its labels: <code>SPAM</code>, <code>INBOX</code>, and the tab category.</p>
+    <p>The dashboard is a static page that calls a single <code>POST /api/app</code> endpoint with an <code>action</code>. The API stores everything in Postgres and is the only part that talks to SMTP, the seed inboxes and the AI service. Placement is found by searching the seed inbox for the exact <code>Message-ID</code> that was sent and reading where it is: <code>SPAM</code>, <code>INBOX</code> and the tab in Gmail, Junk or Focused/Other in Outlook, or the spam folder over IMAP. Some sending services rewrite the <code>Message-ID</code>, so Gmail lookups fall back to the sender, subject and send time.</p>
+    <p>Autopilot is the same API run on a schedule: Vercel Cron calls <code>/api/cron</code> once a day with a secret, and the Docker server runs it from a built-in timer. Each run uses the same draft, AI and send steps you’d use by hand, and claims the day first so it never runs twice.</p>
 
     <h2 id="stack">Tech stack</h2>
     <div class="stack-grid">
@@ -50,27 +51,31 @@
       <div class="stack-item"><b>PostgreSQL 16</b><span>Via psycopg 3. The schema creates and upgrades itself on start.</span></div>
       <div class="stack-item"><b>cryptography</b><span>Fernet encryption for SMTP keys, OAuth tokens and API keys at rest.</span></div>
       <div class="stack-item"><b>Vanilla JS & CSS</b><span>No build step and no dependencies. Geist and Geist Mono are bundled locally.</span></div>
-      <div class="stack-item"><b>Gmail API</b><span>OAuth seed inboxes: placement lookup, threaded replies, filters.</span></div>
-      <div class="stack-item"><b>Gemini API</b><span>Website summaries and draft writing, with structured JSON output.</span></div>
+      <div class="stack-item"><b>Gmail, Microsoft Graph & IMAP</b><span>Seed inboxes: placement lookup, threaded replies, spam rescue and filters.</span></div>
+      <div class="stack-item"><b>Your choice of AI</b><span>Gemini, Claude (Anthropic SDK), and OpenAI-compatible APIs: OpenAI, OpenRouter, Groq and Cloudflare Workers AI.</span></div>
       <div class="stack-item"><b>Docker Compose + Caddy</b><span>Self-hosting with Postgres and optional automatic HTTPS.</span></div>
       <div class="stack-item"><b>Vercel + Neon</b><span>Serverless option: Python Functions with managed Postgres.</span></div>
     </div>
 
     <h2 id="security">Security & privacy</h2>
     <ul>
-      <li><b>Single admin.</b> Passwords are hashed with PBKDF2-SHA256 (310,000 rounds). Sessions use random tokens stored as hashes, in an <code>HttpOnly</code>, <code>SameSite=Strict</code> cookie. Login attempts are rate-limited per IP.</li>
-      <li><b>Secrets encrypted at rest.</b> SMTP keys, Google refresh tokens, the Gemini key and the OAuth client secret are encrypted with your <code>APP_ENCRYPTION_KEY</code>. API responses never return them.</li>
-      <li><b>Narrow mailbox use.</b> Placement checks only look up one message. Moving an email out of spam, marking it important, adding filters and sending replies only happen when you click.</li>
-      <li><b>No telemetry.</b> Your instance talks only to your database, your SMTP provider, Google’s Gmail and OAuth endpoints, and Gemini if you enable it.</li>
+      <li><b>One admin, optional members.</b> Members you invite can only connect and manage their own inboxes; they can’t see emails, results or settings. Passwords are hashed with PBKDF2-SHA256 (310,000 rounds). Sessions use random tokens stored as hashes, in an <code>HttpOnly</code>, <code>SameSite=Strict</code> cookie. Login attempts are rate-limited per IP.</li>
+      <li><b>Secrets encrypted at rest.</b> SMTP keys, inbox refresh tokens and app passwords, AI API keys and the OAuth client secrets are encrypted with your <code>APP_ENCRYPTION_KEY</code>. API responses never return them.</li>
+      <li><b>Narrow mailbox use.</b> Placement checks only look up one message. Moving an email out of spam, marking it important, adding filters and sending replies only happen when you click, or when autopilot (which you switch on) continues its own conversations.</li>
+      <li><b>Locked-down schedule.</b> The daily autopilot endpoint only runs when called with your <code>CRON_SECRET</code>, does nothing while paused, and runs at most once a day.</li>
+      <li><b>No telemetry.</b> Your instance talks only to your database, your SMTP provider, the mail providers of the inboxes you connect, and the AI service you choose.</li>
       <li><b>Not indexed.</b> Dashboard pages send <code>noindex</code> headers and a <code>robots.txt</code> that disallows crawling.</li>
     </ul>
 
     <h2 id="faq">FAQ</h2>
     <details><summary>Will this get my email into the inbox?</summary><p>No tool can promise that. Mail Mantis shows you where mail lands and gives you a calm way to send real, varied emails and replies. Authentication (SPF, DKIM, DMARC), a reputable SMTP provider, and real recipients who engage matter most.</p></details>
-    <details><summary>Does it send or reply automatically?</summary><p>No. Every email and every reply is sent by you pressing Send. Placement checks run automatically while the dashboard is open, and they are read-only.</p></details>
-    <details><summary>Can I use it for outreach or newsletters?</summary><p>No. It sends one email at a time to inboxes you own and connect with Google. It has no lists, imports or campaigns.</p></details>
+    <details><summary>Does it send or reply automatically?</summary><p>Only if you turn on autopilot. Without it, every email and every reply is sent by you pressing Send. With it, a daily run sends 1 to 10 new emails and replies once in each of its open conversations (the seed, then your domain, then the seed again), until you pause it. Placement checks run automatically while the dashboard is open, and they are read-only.</p></details>
+    <details><summary>Can the domain reply back to a seed inbox?</summary><p>Yes. Once a seed inbox has replied, a <b>Reply from your domain</b> button appears under the email, and the answer goes out over your SMTP sender in the same thread. The conversation can go back and forth as long as you like.</p></details>
+    <details><summary>Can I use it for outreach or newsletters?</summary><p>No. It only sends to inboxes you connect yourself, and autopilot is capped at 10 new emails a day. It has no lists, imports or campaigns.</p></details>
     <details><summary>Which inboxes are supported?</summary><p>Gmail and Google Workspace (Google sign-in), Outlook.com and Microsoft 365 (Microsoft sign-in), and Yahoo, iCloud, AOL or any IMAP inbox with an app password. The sender can be any SMTP provider on ports 587 or 465.</p></details>
-    <details><summary>Do I need Gemini?</summary><p>No. You can write the business brief and every email and reply yourself. Gemini only saves time.</p></details>
+    <details><summary>Which AI services can it use?</summary><p>Google Gemini, Anthropic Claude, OpenAI, OpenRouter, Groq and Cloudflare Workers AI, each with your own API key. Gemini, OpenRouter’s free models, Groq and Cloudflare all have free tiers. Gemini and Claude can read your website themselves; the others use the page text Mail Mantis fetches.</p></details>
+    <details><summary>Do I need an AI key?</summary><p>No. Pick <b>Chat app</b> and Mail Mantis gives you the prompt to paste into Claude, ChatGPT or any chat app, and you paste the answer back. You can also write everything yourself. Autopilot is the exception: it writes with your default AI service, so it needs a key.</p></details>
+    <details><summary>What does “Not delivered?” mean?</summary><p>The email isn’t anywhere in that inbox, including Spam and Trash, 30 minutes after sending. That usually means the inbox provider refused it. Look for a bounce in your sender’s mailbox: it says why.</p></details>
 
     <h2 id="credits">Credits</h2>
     <p>Built by David Karuri. Released under the MIT license. Fonts: <a href="https://vercel.com/font">Geist and Geist Mono</a> by Vercel and basement.studio, under the SIL Open Font License.</p>

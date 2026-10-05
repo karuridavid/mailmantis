@@ -4,10 +4,15 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Mail Mantis: know where your domain’s email lands</title>
-  <meta name="description" content="Open-source, self-hosted dashboard for warming up a custom domain with Gmail inboxes you own. Draft with Gemini, send by hand, see Inbox, Promotions or Spam, and reply from one place.">
-  <meta property="og:title" content="Mail Mantis">
-  <meta property="og:description" content="Know where your domain’s email lands. Self-hosted, manual by design.">
-  <meta property="og:image" content="/assets/shots/overview-light.jpg">
+  <meta name="description" content="Open-source, self-hosted dashboard for warming up a custom domain with Gmail, Outlook and IMAP inboxes you own. Draft with the AI you choose, see Inbox, Promotions or Spam, hold two-way conversations, or let autopilot keep mail flowing daily.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://mailmantis.org/">
+  <meta property="og:site_name" content="Mail Mantis">
+  <meta property="og:title" content="Mail Mantis: know where your domain’s email lands">
+  <meta property="og:description" content="Self-hosted domain warm-up and inbox placement. Manual by default, autopilot when you want it.">
+  <meta property="og:image" content="https://mailmantis.org/assets/shots/overview-light.jpg">
+  <meta name="twitter:card" content="summary_large_image">
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Mail Mantis","url":"https://mailmantis.org/","applicationCategory":"BusinessApplication","operatingSystem":"Docker, Linux, macOS, Windows, Vercel","description":"Open-source, self-hosted dashboard for warming up a custom email domain with inboxes you own and checking where its email lands.","license":"https://opensource.org/licenses/MIT","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"author":{"@type":"Person","name":"David Karuri"},"codeRepository":"https://github.com/karuridavid/mailmantis","image":"https://mailmantis.org/assets/shots/overview-light.jpg"}</script>
   <meta name="color-scheme" content="light dark">
   <link rel="canonical" href="https://mailmantis.org/">
   <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
@@ -26,29 +31,29 @@
   <section class="hero"><div class="wrap">
     <span class="eyebrow"><b>Open source</b> · self-hosted · MIT</span>
     <h1>Know where your domain’s email <span>actually</span> lands.</h1>
-    <p class="lead">Mail Mantis is a small dashboard for warming up a custom domain with inboxes you own (Gmail, Outlook, Yahoo, iCloud or any IMAP). Draft ordinary emails with Gemini, send them yourself, see whether they landed in the inbox, a tab or spam, and reply from the same place.</p>
+    <p class="lead">Mail Mantis is a small dashboard for warming up a custom domain with inboxes you own (Gmail, Outlook, Yahoo, iCloud or any IMAP). Draft ordinary emails with the AI you choose, send them, see whether they landed in the inbox, a tab or spam, and keep the conversation going from both sides. Do it by hand, or switch on autopilot and it runs daily until you pause it.</p>
     <div class="cta"><a class="btn primary" href="/self-host">Self-host in three commands</a><a class="btn" href="https://github.com/karuridavid/mailmantis">View the code</a></div>
     <div class="cmd"><span class="p">$</span><code>git clone https://github.com/karuridavid/mailmantis && cd mailmantis && docker compose up -d</code><button class="copy-btn"></button></div>
     <div class="shot"><div class="bar"><i></i><i></i><i></i></div>
       <img class="themed" data-dark="/assets/shots/overview-dark.jpg" src="/assets/shots/overview-light.jpg" width="2720" height="1720" alt="Mail Mantis overview: inbox rate, a per-inbox placement grid, items needing attention and recent activity"></div>
 
     <div class="principles">
-      <div class="principle"><svg class="i" viewBox="0 0 24 24"><path d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v2M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg><h3>Manual by design</h3><p>Nothing sends until you press Send. No schedules, no sequences.</p></div>
-      <div class="principle"><svg class="i" viewBox="0 0 24 24"><path d="m9 17-5-5 5-5"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg><h3>No bot replies</h3><p>Seed inboxes only reply when you write or approve a reply.</p></div>
-      <div class="principle"><svg class="i" viewBox="0 0 24 24"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg><h3>Read-only checks</h3><p>Placement checks read Gmail labels. Messages are never moved.</p></div>
-      <div class="principle"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><h3>Your keys, encrypted</h3><p>SMTP keys, Google tokens and API keys are encrypted at rest.</p></div>
+      <div class="principle"><svg class="i" viewBox="0 0 24 24"><path d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v2M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg><h3>Manual by default</h3><p>Nothing sends until you press Send, or until you switch on autopilot. One click pauses it.</p></div>
+      <div class="principle"><svg class="i" viewBox="0 0 24 24"><path d="m9 17-5-5 5-5"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg><h3>Replies you control</h3><p>Seed inboxes only reply when you send a reply, or when you’ve turned autopilot on.</p></div>
+      <div class="principle"><svg class="i" viewBox="0 0 24 24"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg><h3>Read-only checks</h3><p>Placement checks only read where a message landed. Nothing moves unless you ask.</p></div>
+      <div class="principle"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><h3>Your keys, encrypted</h3><p>SMTP keys, inbox tokens and AI keys are encrypted at rest.</p></div>
     </div>
   </div></section>
 
   <section class="block" id="how"><div class="wrap">
     <div class="kicker">HOW IT WORKS</div>
-    <h2 class="title">A deliberate loop, one email at a time.</h2>
-    <p class="sub">Mail Mantis keeps the whole cycle in one place: your sender, your inboxes, the drafts, where they landed and the replies.</p>
+    <h2 class="title">A deliberate loop, by hand or on autopilot.</h2>
+    <p class="sub">Mail Mantis keeps the whole cycle in one place: your sender, your inboxes, the drafts, where they landed and the conversations that follow.</p>
     <div class="steps">
-      <div class="step"><h3>Connect</h3><p>Add your domain’s SMTP sender and test it. Connect Gmail or Workspace inboxes you own with Google sign-in.</p></div>
-      <div class="step"><h3>Brief</h3><p>Gemini reads your public website and drafts a business brief. You correct it, or write it yourself.</p></div>
-      <div class="step"><h3>Draft & send</h3><p>Get a different, ordinary email for each inbox. Edit, mark ready, and send each one by hand.</p></div>
-      <div class="step"><h3>Check & reply</h3><p>See Primary, Promotions or Spam for every send, then reply from the seed inbox in the same thread.</p></div>
+      <div class="step"><h3>Connect</h3><p>Add your domain’s SMTP sender and test it. Connect Gmail, Outlook, Yahoo, iCloud or IMAP inboxes you own, or invite friends to lend theirs.</p></div>
+      <div class="step"><h3>Brief</h3><p>AI reads your public website and drafts a business brief. You correct it, or write it yourself.</p></div>
+      <div class="step"><h3>Draft & send</h3><p>Get a different, ordinary email for each inbox. Edit, mark ready and send, or let autopilot send a few each day.</p></div>
+      <div class="step"><h3>Check & converse</h3><p>See Primary, Promotions or Spam for every send. Reply from the seed inbox, then answer back from your domain in the same thread.</p></div>
     </div>
   </div></section>
 
@@ -59,10 +64,10 @@
       <div class="feature"><span class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span><h3>Inbox signal grid</h3><p>Every seed inbox against its latest sends. Problems stand out at a glance.</p></div>
       <div class="feature"><span class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg></span><h3>Real inbox placement</h3><p>Gmail tabs, Outlook Focused and Other, and spam folders, read straight from each mailbox.</p>
         <div class="chips"><span class="chip" style="--c:var(--inbox)">Primary</span><span class="chip" style="--c:var(--tab)">Promotions</span><span class="chip" style="--c:var(--spam)">Spam</span></div></div>
-      <div class="feature"><span class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg></span><h3>Gemini drafts</h3><p>Ordinary emails written from a brief you approved. No invented offers, no hype.</p></div>
-      <div class="feature"><span class="ico"><svg class="i" viewBox="0 0 24 24"><path d="m9 17-5-5 5-5"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg></span><h3>Threaded replies</h3><p>Reply from any seed inbox, written by you or Gemini, sent through Gmail in the same thread.</p></div>
-      <div class="feature"><span class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span><h3>Not spam, important, filters</h3><p>Move an email out of spam or mark it important when you choose. Gmail filters and Outlook Focused overrides are read back to confirm.</p></div>
-      <div class="feature"><span class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg></span><h3>Runs anywhere</h3><p>Docker Compose with Postgres on your machine or server, or Vercel with Neon.</p></div>
+      <div class="feature"><span class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/></svg></span><h3>Bring your own AI</h3><p>Gemini, Claude, OpenAI, OpenRouter, Groq or Cloudflare Workers AI with your own key, or paste the prompt into any chat app. Emails come from a brief you approved, with no invented offers.</p></div>
+      <div class="feature"><span class="ico"><svg class="i" viewBox="0 0 24 24"><path d="m9 17-5-5 5-5"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg></span><h3>Two-way conversations</h3><p>Reply from the seed inbox, then answer back from your domain, all in the same thread. AI drafts each reply from the conversation so far.</p></div>
+      <div class="feature"><span class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg></span><h3>Not spam, important, filters</h3><p>Move an email out of spam or mark it important when you choose. One click adds a Gmail filter that skips Spam and marks your mail important.</p></div>
+      <div class="feature"><span class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg></span><h3>Autopilot</h3><p>A daily run that sends a few new emails and moves each conversation on by one reply. Choose 1 to 10 emails a day, run it now, or pause it any time.</p></div>
     </div>
   </div></section>
 
@@ -70,13 +75,14 @@
     <div>
       <div class="kicker">THE EMAILS VIEW</div>
       <h2 class="title">Every email, from draft to reply.</h2>
-      <p class="sub">A mail-client layout with colour-coded status. Open any email to edit it, send it, see its placement and timeline, or reply.</p>
+      <p class="sub">A mail-client layout with colour-coded status. Open any email to edit it, send it, see its placement and timeline, or continue the conversation.</p>
       <ul class="checks">
         <li><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Draft → Ready → Sent, with a confirmation before anything leaves</li>
-        <li><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Placement checked automatically while the dashboard is open</li>
+        <li><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Placement checked automatically while the dashboard is open, with a clear warning when an email never arrived</li>
+        <li><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Replies from the seed and from your domain, threaded together</li>
         <li><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Keyboard friendly: <code>J</code>/<code>K</code> to move, <code>N</code> for new emails</li>
         <li><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Several sender domains, one warmed at a time</li>
-        <li><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Light and dark themes</li>
+        <li><svg class="i" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg>Light and dark themes, and installable as an app</li>
       </ul>
     </div>
     <div class="shot"><div class="bar"><i></i><i></i><i></i></div>
@@ -94,13 +100,13 @@
     <div>
       <div class="kicker">SELF-HOST</div>
       <h2 class="title">Up and running in three commands.</h2>
-      <p class="sub">Docker Compose starts Postgres and the app, and generates the encryption key on first boot. Add HTTPS for a public domain with one more flag, or deploy to Vercel with Neon.</p>
+      <p class="sub">Docker Compose starts Postgres and the app, generates the encryption key on first boot, and runs autopilot’s daily schedule itself. Add HTTPS for a public domain with one more flag, or deploy to Vercel with Neon.</p>
       <div class="cta" style="justify-content:flex-start"><a class="btn primary" href="/self-host">Read the guide</a><a class="btn" href="/about#stack">Tech stack</a></div>
     </div>
   </div></section>
 
   <div class="wrap"><div class="notice"><svg class="i" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></svg>
-    <div><h3>For your own domains and inboxes</h3><p>Mail Mantis sends one email at a time to inboxes you own. It is not a bulk sender or an outreach tool, and it can’t guarantee inbox placement. Good authentication (SPF, DKIM, DMARC) and real engagement matter far more than any tool.</p></div></div></div>
+    <div><h3>For your own domains and inboxes</h3><p>Mail Mantis sends a handful of emails a day, only to inboxes you own or that friends lend you. It is not a bulk sender or an outreach tool, and it can’t guarantee inbox placement. Good authentication (SPF, DKIM, DMARC) and real engagement matter far more than any tool.</p></div></div></div>
 
   <div class="wrap"><div class="final">
     <h2 class="title" style="margin:0 auto 12px">Run your own signal.</h2>

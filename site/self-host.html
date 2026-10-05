@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Self-host Mail Mantis</title>
-  <meta name="description" content="Run Mail Mantis with Docker Compose in three commands, add HTTPS, or deploy to Vercel with Neon. Includes Google OAuth and Gemini setup.">
+  <meta name="description" content="Run Mail Mantis with Docker Compose in three commands, add HTTPS, or deploy to Vercel with Neon. Covers Gmail, Outlook and IMAP inboxes, AI services and the daily autopilot.">
   <meta name="color-scheme" content="light dark">
   <link rel="canonical" href="https://mailmantis.org/self-host">
   <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
@@ -22,7 +22,7 @@
 <main class="wrap docs">
   <nav class="toc" aria-label="On this page"><b>ON THIS PAGE</b>
     <a href="#requirements">Requirements</a><a href="#docker">Docker quick start</a><a href="#https">HTTPS on a domain</a><a href="#google">Gmail sign-in</a><a href="#microsoft">Outlook sign-in</a><a href="#imap">Yahoo, iCloud, IMAP</a><a href="#people">Inviting people</a>
-    <a href="#sender">Domain sender</a><a href="#gemini">Gemini</a><a href="#vercel">Vercel + Neon</a><a href="#config">Configuration</a><a href="#maintain">Updates & backups</a><a href="#develop">Development</a></nav>
+    <a href="#sender">Domain sender</a><a href="#ai">AI services</a><a href="#autopilot">Autopilot</a><a href="#vercel">Vercel + Neon</a><a href="#config">Configuration</a><a href="#maintain">Updates & backups</a><a href="#develop">Development</a></nav>
 
   <article class="prose">
     <h1>Self-host Mail Mantis</h1>
@@ -32,9 +32,9 @@
     <ul>
       <li><b>Docker</b> with Compose, or a Vercel account plus a Neon Postgres database.</li>
       <li>A <b>domain that can send email over SMTP</b>, for example through Brevo, Postmark, Amazon SES or Mailgun, with SPF and DKIM set up.</li>
-      <li>One or more <b>Gmail or Google Workspace inboxes you own</b> to act as seed inboxes.</li>
-      <li>A <b>Google Cloud project</b> for the OAuth client that connects those inboxes (free).</li>
-      <li>Optionally, a <b>Gemini API key</b> for drafting emails and reading your website.</li>
+      <li>One or more <b>inboxes you own</b> (or that friends lend you) to act as seed inboxes: Gmail and Google Workspace, Outlook and Microsoft 365, Yahoo, iCloud, AOL or any IMAP inbox.</li>
+      <li>A free <b>Google Cloud project</b> for Gmail inboxes, and a free <b>Microsoft Entra app registration</b> for Outlook inboxes.</li>
+      <li>Optionally, an <b>API key for one AI service</b> (several have free tiers) for drafting emails and reading your website. Autopilot needs one.</li>
     </ul>
 
     <h2 id="docker">Docker quick start</h2>
@@ -71,8 +71,8 @@ docker compose --profile https up -d</code><button class="copy-btn"></button></p
     <table>
       <tr><th>Scope</th><th>Used for</th></tr>
       <tr><td><code>gmail.modify</code></td><td>Reading the labels on one specific message to report placement, and reading filters. Messages are never moved or relabelled.</td></tr>
-      <tr><td><code>gmail.send</code></td><td>Sending replies you wrote or approved, from that inbox.</td></tr>
-      <tr><td><code>gmail.settings.basic</code></td><td>Creating “Never send to Spam” and “Mark important” filters, only when you click them.</td></tr>
+      <tr><td><code>gmail.send</code></td><td>Sending replies from that inbox: ones you send, or autopilot’s when it’s on.</td></tr>
+      <tr><td><code>gmail.settings.basic</code></td><td>Creating the “Never send to Spam” filter for your sender, which also marks its mail important. Only when you (or the inbox’s owner) click it.</td></tr>
     </table>
 
     <h2 id="microsoft">Outlook and Microsoft 365 inboxes</h2>
@@ -90,8 +90,8 @@ docker compose --profile https up -d</code><button class="copy-btn"></button></p
       <tr><td>Placement</td><td>Junk Email folder → Spam; Inbox with Focused or Other.</td></tr>
       <tr><td>Not spam</td><td>Graph <code>markAsNotJunk</code>: moves the email to the Inbox and unblocks the sender.</td></tr>
       <tr><td>Mark important</td><td>Sets the email’s importance to high.</td></tr>
-      <tr><td>Always Focused</td><td>A Focused Inbox override for your sender address.</td></tr>
-      <tr><td>Mark important rule</td><td>An inbox rule that marks future mail from your sender as high importance.</td></tr>
+      <tr><td>Always Focused</td><td>A Focused Inbox override for your sender address, plus the Mark important rule below, in one click.</td></tr>
+      <tr><td>Mark important rule</td><td>An inbox rule that marks future mail from your sender as high importance. Also available on its own.</td></tr>
       <tr><td>Replies</td><td>Sent from the inbox in the same conversation.</td></tr>
     </table>
     <div class="tip"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg><p>Microsoft Graph has no API for the Safe Senders list, so a “never send to Junk” filter isn’t possible for Outlook. Use <b>Not spam</b> on individual emails instead.</p></div>
@@ -107,15 +107,43 @@ docker compose --profile https up -d</code><button class="copy-btn"></button></p
     <p>Mail Mantis finds the spam folder by its <code>\Junk</code> flag or a name like Spam, Junk or Bulk. <b>Not spam</b> moves the email to INBOX, and <b>Flag as important</b> sets the <code>\Flagged</code> flag (shown as starred or flagged). IMAP has no filter API, so server-side filters aren’t available for these inboxes.</p>
 
     <h2 id="people">Inviting people to lend inboxes</h2>
-    <p>Under <b>People</b>, create an invite link and send it to someone. They set a password and get a <b>member</b> account that can only connect, manage and disconnect their own Gmail or Outlook inboxes. They can’t see emails, domains, results or settings. Links work once and expire after 7 days. Removing a person also disconnects the inboxes they added.</p>
+    <p>Under <b>People</b>, create an invite link and send it to someone. They set a password and get a <b>member</b> account that can only connect, manage and disconnect their own Gmail or Outlook inboxes, and add the Never send to Spam filter to them. They can’t see emails, domains, results or settings. Links work once and expire after 7 days. Removing a person also disconnects the inboxes they added.</p>
     <div class="tip warn"><svg class="i" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></svg><p>While your Google app is in Testing mode, add each person’s Gmail address as a test user, or Google will block their sign-in.</p></div>
 
     <h2 id="sender">Domain sender</h2>
     <p>Under <b>Domain sender</b>, enter your From name, sender address and SMTP details, then choose <b>Test connection</b>. For Brevo that’s <code>smtp-relay.brevo.com</code>, port <code>587</code>, your SMTP login and SMTP key. Saving tests the connection again.</p>
     <p>Before sending anything, make sure your domain has <b>SPF</b>, <b>DKIM</b> and a <b>DMARC</b> record. Your SMTP provider’s domain setup page lists the exact DNS records to add.</p>
 
-    <h2 id="gemini">Gemini</h2>
-    <p>Create an API key at <a href="https://aistudio.google.com/apikey">Google AI Studio</a> and add it under <b>Settings → Gemini</b>. The default model is <code>gemini-3.8-flash</code>; you can change it there. Gemini is optional. You can write the business brief and every email yourself.</p>
+    <h2 id="ai"><span id="gemini"></span>AI services</h2>
+    <p>Add a key for any of these under <b>Settings → AI writing</b>, then choose <b>Test</b>. Pick one as the default; every draft, reply and brief also has a picker, so you can try several. Keys are encrypted and only sent from your server to that service.</p>
+    <table>
+      <tr><th>Service</th><th>Cost</th><th>Default model</th><th>Get a key</th></tr>
+      <tr><td>Google Gemini</td><td>Free tier</td><td><code>gemini-3.8-flash</code></td><td><a href="https://aistudio.google.com/apikey">Google AI Studio</a></td></tr>
+      <tr><td>Anthropic Claude</td><td>Paid API credit</td><td><code>claude-opus-5-5</code></td><td><a href="https://console.anthropic.com/settings/keys">Anthropic Console</a></td></tr>
+      <tr><td>OpenAI</td><td>Paid API credit</td><td><code>gpt-5-mini</code></td><td><a href="https://platform.openai.com/api-keys">OpenAI Platform</a></td></tr>
+      <tr><td>OpenRouter</td><td>Free models</td><td><code>openrouter/free</code></td><td><a href="https://openrouter.ai/settings/keys">OpenRouter</a></td></tr>
+      <tr><td>Groq</td><td>Free tier</td><td><code>openai/gpt-oss-120b</code></td><td><a href="https://console.groq.com/keys">GroqCloud</a></td></tr>
+      <tr><td>Cloudflare Workers AI</td><td>Free daily allowance</td><td><code>@cf/meta/llama-3.3-70b-instruct-fp8-fast</code></td><td><a href="https://dash.cloudflare.com/profile/api-tokens">Cloudflare dashboard</a></td></tr>
+    </table>
+    <p>Gemini and Claude read your website themselves when writing the business brief. The others work from the page text Mail Mantis fetches from your site.</p>
+    <ul>
+      <li><b>Cloudflare Workers AI</b> needs your <b>account ID</b> as well as an API token. On the Cloudflare dashboard, open <b>AI → Workers AI → Use REST API</b>: the account ID is shown there, and <b>Create a Workers AI API Token</b> makes the key.</li>
+      <li><b>Groq</b>: if it says the key can’t use a model, check the model is allowed in your Groq project’s settings, or switch to <code>llama-3.3-70b-versatile</code>.</li>
+      <li><b>OpenRouter</b>: any model ID ending in <code>:free</code> costs nothing.</li>
+    </ul>
+    <div class="tip"><svg class="i" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg><p>No API key? Choose <b>Chat app</b> when you write. Mail Mantis gives you the prompt to paste into Claude, ChatGPT or any chat app you use, and you paste the answer back. A Claude Pro or ChatGPT Plus plan works for this, but doesn’t include API use.</p></div>
+
+    <h2 id="autopilot">Autopilot</h2>
+    <p>Autopilot keeps mail flowing without you opening the dashboard every day. Turn it on from the <b>Autopilot</b> card on the Overview page. It runs once a day, around 09:00 UTC, until you press <b>Pause</b>. Each run:</p>
+    <ol>
+      <li>Replies once in each of its open conversations, in turn: the seed inbox replies to your email, then your domain answers, then the seed replies once more. If the email landed in spam, it can move it to the inbox first (an option on the card). Emails that haven’t arrived are left to wait.</li>
+      <li>Writes and sends new emails (1 to 10 a day, your choice) to the seed inboxes that have gone longest without one.</li>
+    </ol>
+    <p>It writes with your default AI service. Its emails are tagged <b>Auto</b> in the email list, the card shows the last run and any problems, and <b>Run now</b> does today’s run straight away. It only continues conversations it started, so your hand-written threads are left alone. Gmail seed inboxes need <b>Allow sending replies</b> before it can reply from them.</p>
+    <ul>
+      <li><b>Docker</b>: nothing to set up. The server runs it itself.</li>
+      <li><b>Vercel</b>: add a <code>CRON_SECRET</code> environment variable (any long random string) and redeploy. <code>vercel.json</code> already schedules <code>/api/cron</code>, and Vercel sends the secret with each call. On the Hobby plan the run can start any time within that hour.</li>
+    </ul>
 
     <h2 id="vercel">Deploy to Vercel + Neon</h2>
     <ol>
@@ -125,6 +153,7 @@ docker compose --profile https up -d</code><button class="copy-btn"></button></p
 <pre><code>python -c "from cryptography.fernet import Fernet; print('APP_ENCRYPTION_KEY=' + Fernet.generate_key().decode())"
 python -c "import secrets; print('ADMIN_SETUP_KEY=' + secrets.token_urlsafe(18))"</code><button class="copy-btn"></button></pre>
         No Python? <code>openssl rand -base64 32 | tr '+/' '-_'</code> also makes a valid encryption key.</li>
+      <li>For autopilot, also add <code>CRON_SECRET</code>: <code>python -c "import secrets; print(secrets.token_urlsafe(32))"</code>.</li>
       <li>Deploy, open the deployment URL, and sign in with the setup key. Add a custom domain such as <code>app.example.com</code> in Vercel if you like, and use that URL for the Google redirect URI.</li>
     </ol>
     <div class="tip warn"><svg class="i" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/><path d="M12 9v4M12 17h.01"/></svg><p>Keep <code>APP_ENCRYPTION_KEY</code> safe and never change it. Saved SMTP keys, Google tokens and API keys can only be decrypted with it.</p></div>
@@ -137,6 +166,7 @@ python -c "import secrets; print('ADMIN_SETUP_KEY=' + secrets.token_urlsafe(18))
       <tr><td><code>ADMIN_SETUP_KEY</code></td><td>Vercel</td><td>One-time key for creating the admin login. Generated automatically with Docker.</td></tr>
       <tr><td><code>GOOGLE_CLIENT_ID</code><br><code>GOOGLE_CLIENT_SECRET</code></td><td>Optional</td><td>OAuth client. Overrides the values saved in Settings.</td></tr>
       <tr><td><code>MICROSOFT_CLIENT_ID</code><br><code>MICROSOFT_CLIENT_SECRET</code></td><td>Optional</td><td>Microsoft app registration. Overrides the values saved in Settings. <code>MICROSOFT_TENANT</code> defaults to <code>common</code>.</td></tr>
+      <tr><td><code>CRON_SECRET</code></td><td>Vercel, for autopilot</td><td>Shared secret Vercel Cron sends to <code>/api/cron</code>. Not needed with Docker.</td></tr>
       <tr><td><code>APP_URL</code></td><td>Optional</td><td>Public base URL, if it can’t be worked out from the request.</td></tr>
       <tr><td><code>GOOGLE_REDIRECT_URI</code></td><td>Optional</td><td>Overrides the derived <code>APP_URL/api/google_oauth_callback</code>.</td></tr>
       <tr><td><code>DOMAIN</code>, <code>TRUST_PROXY</code></td><td>HTTPS profile</td><td>Domain for Caddy; trust its forwarded headers.</td></tr>
@@ -152,7 +182,7 @@ docker compose exec db pg_dump -U mailmantis mailmantis &gt; mailmantis-backup.s
     <p>The database schema upgrades itself on start. Also back up the <code>app-data</code> volume, or your <code>APP_ENCRYPTION_KEY</code>, alongside the database dump.</p>
 
     <h2 id="develop">Development</h2>
-    <p>The dashboard is plain HTML, CSS and JavaScript, and the API is standard-library Python with <code>psycopg</code> and <code>cryptography</code>. There is no build step. To run it with Gmail, SMTP and Gemini replaced by fakes:</p>
+    <p>The dashboard is plain HTML, CSS and JavaScript, and the API is standard-library Python with <code>psycopg</code> and <code>cryptography</code>. There is no build step. To run it with Gmail, Outlook, SMTP and the AI services replaced by fakes:</p>
     <pre><code>docker run -d --name ms-test-db -e POSTGRES_PASSWORD=dev -p 55432:5432 postgres:16-alpine
 pip install -r requirements.txt
 DEMO=1 python tests/fake_server.py   <span class="c"># http://localhost:18080, demo@example.com / demo-password-123</span></code><button class="copy-btn"></button></pre>
