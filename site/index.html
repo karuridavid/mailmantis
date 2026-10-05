@@ -3,52 +3,56 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Mail Mantis: know where your domain’s email lands</title>
-  <meta name="description" content="Open-source, self-hosted dashboard for warming up a custom domain with Gmail, Outlook and IMAP inboxes you own. Draft with the AI you choose, see Inbox, Promotions or Spam, hold two-way conversations, or let autopilot keep mail flowing daily.">
+  <title>Mail Mantis: Free, Open-Source Email Warm-Up (Self-Hosted)</title>
+  <meta name="description" content="Free, open-source email warm-up you host yourself. AI writes real emails, autopilot sends and replies every day, and you see if each one lands in Primary, Promotions or Spam.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://mailmantis.org/">
   <meta property="og:site_name" content="Mail Mantis">
-  <meta property="og:title" content="Mail Mantis: know where your domain’s email lands">
-  <meta property="og:description" content="Self-hosted domain warm-up and inbox placement. Manual by default, autopilot when you want it.">
+  <meta property="og:title" content="Mail Mantis: free, open-source email warm-up">
+  <meta property="og:description" content="Warm up your domain with real conversations between your own inboxes. AI-written emails, daily autopilot, and inbox placement for every send. Self-hosted, no subscription.">
   <meta property="og:image" content="https://mailmantis.org/assets/shots/overview-light.jpg">
+  <meta property="og:image:alt" content="The Mail Mantis dashboard showing inbox rate and placement for each seed inbox">
   <meta name="twitter:card" content="summary_large_image">
-  <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Mail Mantis","url":"https://mailmantis.org/","applicationCategory":"BusinessApplication","operatingSystem":"Docker, Linux, macOS, Windows, Vercel","description":"Open-source, self-hosted dashboard for warming up a custom email domain with inboxes you own and checking where its email lands.","license":"https://opensource.org/licenses/MIT","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"author":{"@type":"Person","name":"David Karuri"},"codeRepository":"https://github.com/karuridavid/mailmantis","image":"https://mailmantis.org/assets/shots/overview-light.jpg"}</script>
+  <meta name="twitter:title" content="Mail Mantis: free, open-source email warm-up">
+  <meta name="twitter:description" content="Self-hosted email warm-up with AI-written emails, daily autopilot and inbox placement tracking. No subscription.">
+  <meta name="twitter:image" content="https://mailmantis.org/assets/shots/overview-light.jpg">
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"SoftwareApplication","name":"Mail Mantis","alternateName":"Mail Mantis email warm-up","url":"https://mailmantis.org/","applicationCategory":"BusinessApplication","applicationSubCategory":"Email warm-up and deliverability","operatingSystem":"Docker, Linux, macOS, Windows, Vercel","description":"Free, open-source, self-hosted email warm-up. AI writes ordinary emails, a daily autopilot sends them and holds two-way conversations with inboxes you own, and every send shows whether it landed in Primary, Promotions or Spam.","featureList":["Email warm-up autopilot","Inbox placement tracking for Gmail, Outlook and IMAP","AI-written emails with Gemini, Claude, OpenAI, OpenRouter, Groq or Cloudflare Workers AI","Two-way threaded conversations","Spam rescue and Gmail filters","Self-hosted with Docker or Vercel"],"license":"https://opensource.org/licenses/MIT","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"author":{"@type":"Person","name":"David Karuri"},"codeRepository":"https://github.com/karuridavid/mailmantis","image":"https://mailmantis.org/assets/shots/overview-light.jpg"}</script>
   <meta name="color-scheme" content="light dark">
   <link rel="canonical" href="https://mailmantis.org/">
   <link rel="icon" href="/assets/icon.svg" type="image/svg+xml">
   <link rel="preload" href="/assets/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="stylesheet" href="/assets/site.css">
+  <link rel="stylesheet" href="/assets/site.css?v=20261005">
   <script>try{var t=localStorage.getItem('mm-site-theme');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}</script>
 </head>
 <body>
 <header class="nav"><div class="wrap">
   <a class="brand" href="/"><span class="logo"><svg viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="#8cc461" stroke-linecap="round" stroke-linejoin="round"><path d="M44.5 10.5 Q49 5.5 54.5 4.5" stroke-width="1.3"/><path d="M42.5 11 Q44.5 5 48.5 2.5" stroke-width="1.3"/><path d="M30.5 38 L39.5 16.5" stroke-width="4.2"/><path d="M36.5 23.5 L47.5 29.5 L45.5 20.5 L47.5 19" stroke-width="3.2"/><path d="M31 39.5 L36 47.5 L40 57" stroke-width="2.1"/><path d="M28.5 40.5 L24.5 49 L27.5 57.5" stroke-width="2.1"/><path d="M26 41 L18 49.5 L13.5 57.5" stroke-width="2.1"/></g><g fill="#8cc461"><path d="M33 36.5 C26.5 34.5 13 38.5 4.5 49.5 C16 50 28 45 33.5 40 Z"/><path d="M35.5 13.5 L47 9.5 L44.5 19.5 Z"/></g><circle cx="44.2" cy="12.3" r="1.7" fill="#0b0b0d"/></svg></span>Mail Mantis</a>
-  <nav class="nav-links"><a href="#how">How it works</a><a href="#features">Features</a><a href="/self-host">Self-host</a><a href="/about">About</a></nav>
+  <nav class="nav-links"><a href="#how">How it works</a><a href="#features">Features</a><a href="#compare">Why free</a><a href="/self-host">Self-host</a><a href="/about">About</a></nav>
   <div class="right"><button class="btn sm theme-btn" type="button" data-theme-toggle aria-label="Switch light or dark theme"></button><a class="btn sm coffee" data-coffee hidden href="#"><svg class="i" viewBox="0 0 24 24"><path d="M10 2v2M14 2v2M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1"/><path d="M6 2v2"/></svg>Buy me a coffee</a><a class="btn sm" href="https://github.com/karuridavid/mailmantis"><svg class="i" viewBox="0 0 24 24"><path d="M15 22v-4a4.8 4.8 0 0 0-1-3.5c3 0 6-2 6-5.5.08-1.25-.27-2.48-1-3.5.28-1.15.28-2.35 0-3.5 0 0-1 0-3 1.5-2.64-.5-5.36-.5-8 0C6 2 5 2 5 2c-.3 1.15-.3 2.35 0 3.5A5.4 5.4 0 0 0 4 9c0 3.5 3 5.5 6 5.5-.39.49-.68 1.05-.85 1.65-.17.6-.22 1.23-.15 1.85v4"/><path d="M9 18c-4.51 2-5-2-7-2"/></svg>GitHub</a></div>
 </div></header>
 
 <main>
   <section class="hero"><div class="wrap">
-    <span class="eyebrow"><b>Open source</b> · self-hosted · MIT</span>
-    <h1>Know where your domain’s email <span>actually</span> lands.</h1>
-    <p class="lead">Mail Mantis is a small dashboard for warming up a custom domain with inboxes you own (Gmail, Outlook, Yahoo, iCloud or any IMAP). Draft ordinary emails with the AI you choose, send them, see whether they landed in the inbox, a tab or spam, and keep the conversation going from both sides. Do it by hand, or switch on autopilot and it runs daily until you pause it.</p>
-    <div class="cta"><a class="btn primary" href="/self-host">Self-host in three commands</a><a class="btn" href="https://github.com/karuridavid/mailmantis">View the code</a></div>
+    <span class="eyebrow"><b>Free forever</b> · open source · self-hosted</span>
+    <h1>Free, open-source email warm-up <span>you run yourself.</span></h1>
+    <p class="lead">Build your domain’s reputation so your email reaches the inbox, not spam. AI writes everyday emails, Mail Mantis sends them to inboxes you own and keeps the conversations going every day on autopilot, and you see exactly where each one landed. No subscription, no per-inbox fees, and your data stays on your server.</p>
+    <div class="cta"><a class="btn primary" href="/self-host">Start free in 3 commands</a><a class="btn" href="https://github.com/karuridavid/mailmantis">Star on GitHub</a></div>
     <div class="cmd"><span class="p">$</span><code>git clone https://github.com/karuridavid/mailmantis && cd mailmantis && docker compose up -d</code><button class="copy-btn"></button></div>
     <div class="shot"><div class="bar"><i></i><i></i><i></i></div>
       <img class="themed" data-dark="/assets/shots/overview-dark.jpg" src="/assets/shots/overview-light.jpg" width="2720" height="1720" alt="Mail Mantis overview: inbox rate, a per-inbox placement grid, items needing attention and recent activity"></div>
 
     <div class="principles">
-      <div class="principle"><svg class="i" viewBox="0 0 24 24"><path d="M18 11V6a2 2 0 0 0-4 0v5M14 10V4a2 2 0 0 0-4 0v2M10 10.5V6a2 2 0 0 0-4 0v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/></svg><h3>Manual by default</h3><p>Nothing sends until you press Send, or until you switch on autopilot. One click pauses it.</p></div>
-      <div class="principle"><svg class="i" viewBox="0 0 24 24"><path d="m9 17-5-5 5-5"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg><h3>Replies you control</h3><p>Seed inboxes only reply when you send a reply, or when you’ve turned autopilot on.</p></div>
-      <div class="principle"><svg class="i" viewBox="0 0 24 24"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg><h3>Read-only checks</h3><p>Placement checks only read where a message landed. Nothing moves unless you ask.</p></div>
-      <div class="principle"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg><h3>Your keys, encrypted</h3><p>SMTP keys, inbox tokens and AI keys are encrypted at rest.</p></div>
+      <div class="principle"><svg class="i" viewBox="0 0 24 24"><path d="m16 18 6-6-6-6M8 6l-6 6 6 6"/></svg><h3>Free and open source</h3><p>MIT licensed. No plans, no seat limits, no card. Read every line of the code.</p></div>
+      <div class="principle"><svg class="i" viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/><path d="M6 7h.01M6 17h.01"/></svg><h3>Self-hosted</h3><p>Runs on your machine, your server or Vercel. Your inboxes and data stay with you.</p></div>
+      <div class="principle"><svg class="i" viewBox="0 0 24 24"><path d="m9 17-5-5 5-5"/><path d="M20 18v-2a4 4 0 0 0-4-4H4"/></svg><h3>Real conversations</h3><p>Two-way threads between your domain and real inboxes, not a pool of strangers’ bots.</p></div>
+      <div class="principle"><svg class="i" viewBox="0 0 24 24"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/></svg><h3>Daily autopilot</h3><p>Switch it on and it sends and replies every day. Pause it with one click.</p></div>
     </div>
   </div></section>
 
   <section class="block" id="how"><div class="wrap">
     <div class="kicker">HOW IT WORKS</div>
-    <h2 class="title">A deliberate loop, by hand or on autopilot.</h2>
-    <p class="sub">Mail Mantis keeps the whole cycle in one place: your sender, your inboxes, the drafts, where they landed and the conversations that follow.</p>
+    <h2 class="title">From cold domain to trusted sender.</h2>
+    <p class="sub">Inbox providers trust domains that send ordinary mail people open and reply to. Mail Mantis creates exactly that, in four steps, and shows you the result for every email.</p>
     <div class="steps">
       <div class="step"><h3>Connect</h3><p>Add your domain’s SMTP sender and test it. Connect Gmail, Outlook, Yahoo, iCloud or IMAP inboxes you own, or invite friends to lend theirs.</p></div>
       <div class="step"><h3>Brief</h3><p>AI reads your public website and drafts a business brief. You correct it, or write it yourself.</p></div>
@@ -59,7 +63,7 @@
 
   <section class="block" id="features"><div class="wrap">
     <div class="kicker">FEATURES</div>
-    <h2 class="title">Small, focused, and honest about what it measures.</h2>
+    <h2 class="title">Everything you need to warm up a domain. No monthly bill.</h2>
     <div class="features">
       <div class="feature"><span class="ico"><svg class="i" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span><h3>Inbox signal grid</h3><p>Every seed inbox against its latest sends. Problems stand out at a glance.</p></div>
       <div class="feature"><span class="ico"><svg class="i" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg></span><h3>Real inbox placement</h3><p>Gmail tabs, Outlook Focused and Other, and spam folders, read straight from each mailbox.</p>
@@ -99,9 +103,24 @@
 <span class="c"># → http://localhost:8080</span></pre></div>
     <div>
       <div class="kicker">SELF-HOST</div>
-      <h2 class="title">Up and running in three commands.</h2>
+      <h2 class="title">Free to run. Up in three commands.</h2>
       <p class="sub">Docker Compose starts Postgres and the app, generates the encryption key on first boot, and runs autopilot’s daily schedule itself. Add HTTPS for a public domain with one more flag, or deploy to Vercel with Neon.</p>
       <div class="cta" style="justify-content:flex-start"><a class="btn primary" href="/self-host">Read the guide</a><a class="btn" href="/about#stack">Tech stack</a></div>
+    </div>
+  </div></section>
+
+  <section class="block" id="compare"><div class="wrap">
+    <div class="kicker">WHY MAIL MANTIS</div>
+    <h2 class="title">Warm-up without the subscription or the black box.</h2>
+    <p class="sub">Most warm-up services charge every month, often per inbox, and swap mail with a shared pool of other customers’ inboxes. Mail Mantis works differently.</p>
+    <div class="compare" role="table" aria-label="Mail Mantis compared with a typical warm-up service">
+      <div class="compare-row head" role="row"><span role="columnheader"></span><span role="columnheader">Mail Mantis</span><span role="columnheader">Typical warm-up service</span></div>
+      <div class="compare-row" role="row"><span role="rowheader">Price</span><span role="cell"><b>Free, forever</b></span><span role="cell">Monthly subscription, often per inbox</span></div>
+      <div class="compare-row" role="row"><span role="rowheader">Who your mail talks to</span><span role="cell"><b>Your own inboxes and friends’</b>, in real threads</span><span role="cell">A shared pool of strangers’ inboxes</span></div>
+      <div class="compare-row" role="row"><span role="rowheader">What you see</span><span role="cell"><b>Primary, Promotions or Spam</b> for every single email</span><span role="cell">Often a single health score</span></div>
+      <div class="compare-row" role="row"><span role="rowheader">AI writing</span><span role="cell"><b>Six AI services</b>, your own key, several with free tiers</span><span role="cell">Their templates or their AI</span></div>
+      <div class="compare-row" role="row"><span role="rowheader">Your data and keys</span><span role="cell"><b>On your server</b>, encrypted at rest</span><span role="cell">On their servers</span></div>
+      <div class="compare-row" role="row"><span role="rowheader">Source code</span><span role="cell"><b>Open, MIT licensed</b></span><span role="cell">Closed</span></div>
     </div>
   </div></section>
 
@@ -109,15 +128,15 @@
     <div><h3>For your own domains and inboxes</h3><p>Mail Mantis sends a handful of emails a day, only to inboxes you own or that friends lend you. It is not a bulk sender or an outreach tool, and it can’t guarantee inbox placement. Good authentication (SPF, DKIM, DMARC) and real engagement matter far more than any tool.</p></div></div></div>
 
   <div class="wrap"><div class="final">
-    <h2 class="title" style="margin:0 auto 12px">Run your own signal.</h2>
-    <p class="sub" style="margin:0 auto">Free and open source under the MIT license.</p>
-    <div class="cta"><a class="btn primary" href="/self-host">Self-host guide</a><a class="btn" href="https://github.com/karuridavid/mailmantis">Star on GitHub</a></div>
+    <h2 class="title" style="margin:0 auto 12px">Start warming up your domain today.</h2>
+    <p class="sub" style="margin:0 auto">Free and open source under the MIT license. No account, no card, no limit on inboxes.</p>
+    <div class="cta"><a class="btn primary" href="/self-host">Get started free</a><a class="btn" href="https://github.com/karuridavid/mailmantis">Star on GitHub</a></div>
   </div></div>
 </main>
 
 <footer><div class="wrap">
   <a class="brand" href="/"><span class="logo"><svg viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="#8cc461" stroke-linecap="round" stroke-linejoin="round"><path d="M44.5 10.5 Q49 5.5 54.5 4.5" stroke-width="1.3"/><path d="M42.5 11 Q44.5 5 48.5 2.5" stroke-width="1.3"/><path d="M30.5 38 L39.5 16.5" stroke-width="4.2"/><path d="M36.5 23.5 L47.5 29.5 L45.5 20.5 L47.5 19" stroke-width="3.2"/><path d="M31 39.5 L36 47.5 L40 57" stroke-width="2.1"/><path d="M28.5 40.5 L24.5 49 L27.5 57.5" stroke-width="2.1"/><path d="M26 41 L18 49.5 L13.5 57.5" stroke-width="2.1"/></g><g fill="#8cc461"><path d="M33 36.5 C26.5 34.5 13 38.5 4.5 49.5 C16 50 28 45 33.5 40 Z"/><path d="M35.5 13.5 L47 9.5 L44.5 19.5 Z"/></g><circle cx="44.2" cy="12.3" r="1.7" fill="#0b0b0d"/></svg></span>Mail Mantis</a>
-  <span>MIT licensed · Built by David Karuri</span>
+  <span>Free, open-source email warm-up · MIT licensed · Built by David Karuri</span>
   <nav><a href="/self-host">Self-host</a><a href="/about">About</a><a href="https://github.com/karuridavid/mailmantis">GitHub</a><a data-coffee hidden href="#">Buy me a coffee</a></nav>
 </div></footer>
 <script src="/assets/site.js" defer></script>
